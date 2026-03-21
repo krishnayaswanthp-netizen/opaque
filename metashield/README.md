@@ -9,9 +9,13 @@ and simulates a DLP gateway sanitizing email attachments before they leave the n
 metashield/
 |-- exif_stripper.py      # metadata parsing and stripping
 |-- dlp_interceptor.py    # mock email interceptor / DLP flow
-|-- app.py                # Flask web UI
+|-- app.py                # Flask backend + legacy web UI
 |-- test_cli.py           # CLI demo runner
 `-- requirements.txt
+
+../metaUI/
+|-- app/page.tsx          # integrated Next.js frontend
+`-- next.config.mjs       # proxies /backend/* to Flask
 ```
 
 ## How to run
@@ -52,20 +56,64 @@ What it does:
 - Runs the mock DLP interception flow
 - Exports artifacts to the local `outputs/` folder
 
-### 4. Run the web demo
+### 4. Run the Meta-Shield backend
 
 ```bash
 python app.py
 ```
 
-Then open:
+This starts the Flask backend on:
 
 ```text
 http://127.0.0.1:5000
 ```
 
-The web app lets you upload an image, inspect the exposed metadata, strip it,
-and download the clean result. It only analyzes files you provide.
+### 5. Run the integrated `metaUI` frontend
+
+In a second terminal:
+
+Windows PowerShell:
+
+```powershell
+cd ..\metaUI
+npm install
+npm run dev
+```
+
+macOS / Linux:
+
+```bash
+cd ../metaUI
+npm install
+npm run dev
+```
+
+Then open:
+
+```text
+http://127.0.0.1:3000
+```
+
+The Next.js UI proxies `/backend/*` to the Flask app on `http://127.0.0.1:5000`,
+so the Python backend must be running first.
+
+If your Flask backend runs on a different URL, set:
+
+```text
+METASHIELD_BACKEND_URL=http://your-host:your-port
+```
+
+before starting the Next.js app.
+
+### 6. Legacy Flask UI
+
+The original Flask page still works at:
+
+```text
+http://127.0.0.1:5000
+```
+
+Both UIs only analyze files you explicitly upload from your machine.
 
 ## Supported input formats
 

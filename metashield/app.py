@@ -561,6 +561,22 @@ def download_clean():
     return send_file(CLEAN_PATH, as_attachment=True)
 
 
+@app.route("/download_original")
+def download_original():
+    filename = request.args.get("filename")
+    if not filename:
+        return "Missing filename", 400
+
+    try:
+        safe_name, original_path = _resolve_uploaded_path(filename)
+    except ValueError as exc:
+        return str(exc), 400
+    except FileNotFoundError as exc:
+        return str(exc), 404
+
+    return send_file(original_path, as_attachment=True, download_name=safe_name)
+
+
 if __name__ == "__main__":
     print("\nMeta-Shield DLP Demo")
     print("=" * 40)
