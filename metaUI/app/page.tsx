@@ -27,7 +27,7 @@ import {
 import { Header } from "@/components/opaque/header"
 import { Button } from "@/components/ui/button"
 
-type Stage = "upload" | "scanning" | "results"
+type Stage = "upload" | "scanning" | "results" | "batch"
 type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
 
 interface GPSInfo {
@@ -121,6 +121,38 @@ interface SendEmailResponse {
   smtp_default_sender?: string | null
 }
 
+interface BatchMailDetail {
+  filename: string
+  status: "success" | "failed"
+  reason?: string | null
+  file_type?: "image" | "document" | null
+  risk_level?: RiskLevel | null
+  contains_hidden_data?: boolean | null
+  tags_removed?: number | null
+  output_filename?: string | null
+}
+
+interface BatchMailResponse {
+  message?: string
+  error?: string
+  total_files: number
+  processed: number
+  failed: number
+  details: BatchMailDetail[]
+  risk_summary?: {
+    safe_files: number
+    risky_files: number
+  }
+  zip_output?: boolean
+  sender?: string
+  recipients?: string[]
+  subject?: string
+  attachment_count?: number
+  archive_name?: string | null
+  download_url?: string | null
+  download_artifact?: string | null
+}
+
 interface ScanLogEntry {
   id: string
   message: string
@@ -176,6 +208,14 @@ function formatTimestamp(value: string) {
 }
 
 function formatThumbnailSize(bytes: number) {
+  return `${(bytes / 1024).toFixed(1)} KB`
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
   return `${(bytes / 1024).toFixed(1)} KB`
 }
 
@@ -235,26 +275,30 @@ function buildLogEntry(message: string, status: ScanLogEntry["status"]): ScanLog
 }
 
 function UploadPane({
-  onFileUpload,
+  onFilesSelected,
   error,
 }: {
-  onFileUpload: (file: File) => void | Promise<void>
+  onFilesSelected: (files: File[]) => void | Promise<void>
   error?: string | null
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
 
-  const submitFile = (file: File | null) => {
-    if (!file) {
+  const submitFiles = (incoming: FileList | File[] | null) => {
+    const files = Array.from(incoming ?? [])
+    if (!files.length) {
       return
     }
 
-    const extension = file.name.includes(".")
-      ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
-      : ""
+    const supportedFiles = files.filter((file) => {
+      const extension = file.name.includes(".")
+        ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
+        : ""
+      return ACCEPTED_EXTENSIONS.includes(extension)
+    })
 
-    if (!ACCEPTED_EXTENSIONS.includes(extension)) {
+    if (!supportedFiles.length) {
       setLocalError(
         `Unsupported file type. Upload one of: ${ACCEPTED_EXTENSIONS.join(", ")}`,
       )
@@ -262,7 +306,7 @@ function UploadPane({
     }
 
     setLocalError(null)
-    void onFileUpload(file)
+    void onFilesSelected(files)
   }
 
   const activeError = localError || error
@@ -282,7 +326,7 @@ function UploadPane({
         onDrop={(event) => {
           event.preventDefault()
           setIsDragOver(false)
-          submitFile(event.dataTransfer.files?.[0] ?? null)
+          submitFiles(event.dataTransfer.files)
         }}
         className={`
           relative cursor-pointer rounded-xl p-12 border-2 border-dashed transition-all duration-300
@@ -296,9 +340,10 @@ function UploadPane({
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           accept={ACCEPTED_EXTENSIONS.join(",")}
           onChange={(event) => {
-            submitFile(event.target.files?.[0] ?? null)
+            submitFiles(event.target.files)
             event.target.value = ""
           }}
           className="hidden"
@@ -347,7 +392,7 @@ function UploadPane({
               Supports PNG, JPG, JPEG, TIF, TIFF, PDF, and DOCX
             </p>
             <p className="text-xs text-muted-foreground/90">
-              Meta-Shield only analyzes the file you provide. No static demo data is used.
+              Select one file for deep inspection, or multiple files for one sanitized batch email.
             </p>
           </div>
 
@@ -1322,16 +1367,335 @@ function ActionPane({
   )
 }
 
+function BatchPane({
+  files,
+  emailForm,
+  zipOutput,
+  isPreparing,
+  isSending,
+  error,
+  result,
+  onEmailFieldChange,
+  onZipOutputChange,
+  onPrepare,
+  onSend,
+  onDownloadPrepared,
+  onReset,
+}: {
+  files: File[]
+  emailForm: EmailFormState
+  zipOutput: boolean
+  isPreparing: boolean
+  isSending: boolean
+  error?: string | null
+  result: BatchMailResponse | null
+  onEmailFieldChange: (field: keyof EmailFormState, value: string) => void
+  onZipOutputChange: (checked: boolean) => void
+  onPrepare: () => void | Promise<void>
+  onSend: () => void | Promise<void>
+  onDownloadPrepared: () => void
+  onReset: () => void
+}) {
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
+  const processedFiles = result?.processed ?? 0
+  const failedFiles = result?.failed ?? 0
+  const riskyFiles = result?.risk_summary?.risky_files ?? 0
+  const safeFiles = result?.risk_summary?.safe_files ?? 0
+
+  return (
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="glass-panel rounded-xl p-6">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-4">
+            <div className="rounded-xl bg-neon-blue/15 p-3">
+              <Mail className="h-8 w-8 text-neon-blue" />
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">
+                Batch Send Mode
+              </p>
+              <h3 className="text-2xl font-bold uppercase tracking-[0.12em] text-foreground">
+                {files.length} Files Ready
+              </h3>
+              <p className="max-w-2xl text-sm text-muted-foreground">
+                Meta-Shield will sanitize each selected file, keep processing even if one fails,
+                and send exactly one email when the batch is ready.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:min-w-[320px]">
+            <div className="rounded-xl border border-border/80 bg-background/45 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                Selected Files
+              </p>
+              <p className="mt-2 text-3xl font-bold text-foreground">{files.length}</p>
+            </div>
+            <div className="rounded-xl border border-border/80 bg-background/45 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                Total Size
+              </p>
+              <p className="mt-2 text-3xl font-bold text-foreground">{formatFileSize(totalBytes)}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <section className="glass-panel space-y-5 rounded-xl p-6">
+          <div className="flex items-center gap-2">
+            <FileWarning className="h-5 w-5 text-neon-blue" />
+            <h3 className="text-lg font-semibold text-foreground">Batch Queue</h3>
+          </div>
+
+          <div className="rounded-xl border border-border/80 bg-background/45 p-4 text-sm text-muted-foreground">
+            Choose multiple files with `Ctrl` or `Shift`, or drag a group of files into the drop zone.
+            One email will be sent after the whole batch is sanitized.
+          </div>
+
+          <div className="space-y-3">
+            {files.map((file, index) => (
+              <div
+                key={`${file.name}-${index}-${file.size}`}
+                className="flex items-center justify-between gap-4 rounded-xl border border-border/80 bg-background/40 p-4"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-foreground">{file.name}</p>
+                  <p className="mt-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                    {file.name.split(".").pop()?.toUpperCase() ?? "FILE"}
+                  </p>
+                </div>
+                <p className="shrink-0 text-sm text-muted-foreground">{formatFileSize(file.size)}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="glass-panel space-y-5 rounded-xl p-6">
+          <div className="flex items-center gap-2">
+            <Mail className="h-5 w-5 text-neon-blue" />
+            <h3 className="text-lg font-semibold text-foreground">Send Sanitized Batch</h3>
+          </div>
+
+          <p className="text-sm text-muted-foreground">
+            The backend will sanitize every supported file first, then send one email with either
+            a single ZIP or the cleaned files directly.
+          </p>
+
+          <div className="rounded-xl border border-neon-blue/20 bg-neon-blue/10 p-4 text-sm text-neon-blue">
+            Prepare Clean ZIP works even when SMTP is not configured. It gives you a downloadable
+            sanitized batch artifact before any email is sent.
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-2">
+              <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                Sender
+              </span>
+              <input
+                type="email"
+                value={emailForm.sender}
+                onChange={(event) => onEmailFieldChange("sender", event.target.value)}
+                placeholder="sender@example.com"
+                className="w-full rounded-xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-neon-blue"
+              />
+            </label>
+
+            <label className="space-y-2">
+              <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                Recipients
+              </span>
+              <input
+                type="text"
+                value={emailForm.recipients}
+                onChange={(event) => onEmailFieldChange("recipients", event.target.value)}
+                placeholder="alice@example.com, bob@example.com"
+                className="w-full rounded-xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-neon-blue"
+              />
+            </label>
+          </div>
+
+          <label className="space-y-2 block">
+            <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              Subject
+            </span>
+            <input
+              type="text"
+              value={emailForm.subject}
+              onChange={(event) => onEmailFieldChange("subject", event.target.value)}
+              placeholder="Sanitized batch from Meta-Shield"
+              className="w-full rounded-xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-neon-blue"
+            />
+          </label>
+
+          <label className="space-y-2 block">
+            <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              Body
+            </span>
+            <textarea
+              value={emailForm.body}
+              onChange={(event) => onEmailFieldChange("body", event.target.value)}
+              rows={5}
+              placeholder="These attachments were sanitized by Meta-Shield before being shared."
+              className="w-full rounded-xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-neon-blue"
+            />
+          </label>
+
+          <label className="flex items-center gap-3 rounded-xl border border-border/80 bg-background/40 p-4">
+            <input
+              type="checkbox"
+              checked={zipOutput}
+              onChange={(event) => onZipOutputChange(event.target.checked)}
+              className="h-4 w-4 rounded border-border bg-background"
+            />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">Package cleaned files as one ZIP</p>
+              <p className="text-xs text-muted-foreground">
+                Recommended for larger batches and cleaner email delivery.
+              </p>
+            </div>
+          </label>
+
+          <div className="flex flex-wrap items-center gap-4">
+            <Button
+              onClick={() => void onPrepare()}
+              disabled={isPreparing}
+              variant="outline"
+              className="rounded-xl border-border bg-background/40 px-6 py-6 transition-all duration-300 hover:border-neon-green hover:text-neon-green"
+            >
+              {isPreparing ? (
+                <>
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  Preparing Clean ZIP...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="mr-2 h-5 w-5" />
+                  Prepare Clean ZIP
+                </>
+              )}
+            </Button>
+
+            <Button
+              onClick={() => void onSend()}
+              disabled={isSending || isPreparing}
+              className="rounded-xl bg-gradient-to-r from-neon-blue to-neon-green px-6 py-6 font-semibold text-background transition-all duration-300 hover:scale-[1.01] hover:from-neon-blue/90 hover:to-neon-green/90"
+            >
+              {isSending ? (
+                <>
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  Sending Batch...
+                </>
+              ) : (
+                <>
+                  <SendHorizontal className="mr-2 h-5 w-5" />
+                  Send One Sanitized Email
+                </>
+              )}
+            </Button>
+
+            {result?.download_url ? (
+              <Button
+                onClick={onDownloadPrepared}
+                variant="outline"
+                className="rounded-xl border-border bg-background/40 px-6 py-6 transition-all duration-300 hover:border-neon-blue hover:text-neon-blue"
+              >
+                <Download className="mr-2 h-5 w-5" />
+                Download Clean ZIP
+              </Button>
+            ) : null}
+
+            <Button
+              onClick={onReset}
+              variant="outline"
+              className="rounded-xl border-border bg-background/40 px-6 py-6 transition-all duration-300 hover:border-neon-blue hover:text-neon-blue"
+            >
+              <RotateCcw className="mr-2 h-5 w-5" />
+              Reset
+            </Button>
+          </div>
+
+          {error ? (
+            <div className="rounded-xl border border-neon-red/30 bg-neon-red/10 p-4 text-sm text-neon-red">
+              {error}
+            </div>
+          ) : null}
+
+          {result ? (
+            <div className="space-y-4 rounded-xl border border-neon-green/30 bg-neon-green/10 p-4 text-sm">
+              <p className="font-semibold text-neon-green">
+                {result.message ?? result.error ?? "Batch completed"}
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-border/60 bg-background/30 p-3">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Processed</p>
+                  <p className="mt-1 text-xl font-semibold text-foreground">{processedFiles}</p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-background/30 p-3">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Failed</p>
+                  <p className="mt-1 text-xl font-semibold text-foreground">{failedFiles}</p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-background/30 p-3">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Risky Files</p>
+                  <p className="mt-1 text-xl font-semibold text-foreground">{riskyFiles}</p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-background/30 p-3">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Safe Files</p>
+                  <p className="mt-1 text-xl font-semibold text-foreground">{safeFiles}</p>
+                </div>
+              </div>
+
+              {result.archive_name ? (
+                <p className="text-foreground">Archive: {result.archive_name}</p>
+              ) : null}
+
+              <div className="space-y-2">
+                {result.details.map((detail, index) => (
+                  <div
+                    key={`${detail.filename}-${index}`}
+                    className="rounded-xl border border-border/60 bg-background/30 p-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="font-medium text-foreground">{detail.filename}</p>
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-[11px] uppercase tracking-[0.2em] ${
+                          detail.status === "success"
+                            ? "border border-neon-green/40 bg-neon-green/15 text-neon-green"
+                            : "border border-neon-red/40 bg-neon-red/15 text-neon-red"
+                        }`}
+                      >
+                        {detail.status}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {detail.status === "success"
+                        ? `${detail.file_type ?? "file"} | ${detail.risk_level ?? "LOW"} risk | ${detail.tags_removed ?? 0} tags removed`
+                        : detail.reason ?? "Unable to process this file"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </section>
+      </div>
+    </div>
+  )
+}
+
 export default function OpaquePage() {
   const [stage, setStage] = useState<Stage>("upload")
   const [sourceFileName, setSourceFileName] = useState<string | null>(null)
   const [uploadedFilename, setUploadedFilename] = useState<string | null>(null)
+  const [selectedBatchFiles, setSelectedBatchFiles] = useState<File[]>([])
   const [scanReport, setScanReport] = useState<MetadataReport | null>(null)
   const [stripResult, setStripResult] = useState<StripResponse | null>(null)
+  const [batchResult, setBatchResult] = useState<BatchMailResponse | null>(null)
   const [scanLogs, setScanLogs] = useState<ScanLogEntry[]>([])
   const [scanProgress, setScanProgress] = useState(0)
   const [scanError, setScanError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [batchError, setBatchError] = useState<string | null>(null)
   const [isCleaning, setIsCleaning] = useState(false)
   const [emailForm, setEmailForm] = useState<EmailFormState>({
     sender: "",
@@ -1339,6 +1703,8 @@ export default function OpaquePage() {
     subject: "",
     body: "",
   })
+  const [batchZipOutput, setBatchZipOutput] = useState(true)
+  const [isPreparingBatch, setIsPreparingBatch] = useState(false)
   const [isSendingEmail, setIsSendingEmail] = useState(false)
   const [emailError, setEmailError] = useState<string | null>(null)
   const [emailResult, setEmailResult] = useState<SendEmailResponse | null>(null)
@@ -1351,12 +1717,15 @@ export default function OpaquePage() {
     setStage("upload")
     setSourceFileName(null)
     setUploadedFilename(null)
+    setSelectedBatchFiles([])
     setScanReport(null)
     setStripResult(null)
+    setBatchResult(null)
     setScanLogs([])
     setScanProgress(0)
     setScanError(null)
     setActionError(null)
+    setBatchError(null)
     setIsCleaning(false)
     setEmailForm({
       sender: "",
@@ -1364,21 +1733,26 @@ export default function OpaquePage() {
       subject: "",
       body: "",
     })
+    setBatchZipOutput(true)
+    setIsPreparingBatch(false)
     setIsSendingEmail(false)
     setEmailError(null)
     setEmailResult(null)
   }
 
-  const handleFileUpload = async (file: File) => {
+  const handleSingleFileUpload = async (file: File) => {
     setStage("scanning")
     setSourceFileName(file.name)
     setUploadedFilename(null)
+    setSelectedBatchFiles([])
     setScanReport(null)
     setStripResult(null)
+    setBatchResult(null)
     setScanLogs([])
     setScanProgress(5)
     setScanError(null)
     setActionError(null)
+    setBatchError(null)
 
     appendScanLog(`Preparing secure upload queue for ${file.name}`, "info")
 
@@ -1467,6 +1841,43 @@ export default function OpaquePage() {
     }
   }
 
+  const handleBatchSelection = (files: File[]) => {
+    setStage("batch")
+    setSourceFileName(null)
+    setUploadedFilename(null)
+    setSelectedBatchFiles(files)
+    setScanReport(null)
+    setStripResult(null)
+    setBatchResult(null)
+    setScanLogs([])
+    setScanProgress(0)
+    setScanError(null)
+    setActionError(null)
+    setBatchError(null)
+    setIsCleaning(false)
+    setIsSendingEmail(false)
+    setEmailError(null)
+    setEmailResult(null)
+    setBatchZipOutput(true)
+    setEmailForm((current) => ({
+      sender: current.sender,
+      recipients: current.recipients,
+      subject: `Sanitized batch from Meta-Shield: ${files.length} files`,
+      body: "These attachments were sanitized by Meta-Shield before being shared.",
+    }))
+  }
+
+  const handleFilesSelected = async (files: File[]) => {
+    if (files.length <= 1) {
+      if (files[0]) {
+        await handleSingleFileUpload(files[0])
+      }
+      return
+    }
+
+    handleBatchSelection(files)
+  }
+
   const handleStrip = async () => {
     if (!uploadedFilename) {
       setActionError("No uploaded file is available to clean.")
@@ -1553,6 +1964,150 @@ export default function OpaquePage() {
     }
   }
 
+  const handleBatchSend = async () => {
+    if (!selectedBatchFiles.length) {
+      setBatchError("No files are queued for batch delivery.")
+      return
+    }
+
+    setIsSendingEmail(true)
+    setBatchError(null)
+
+    const formData = new FormData()
+    for (const file of selectedBatchFiles) {
+      formData.append("files", file)
+    }
+    formData.append("sender", emailForm.sender)
+    formData.append("recipient", emailForm.recipients)
+    formData.append("subject", emailForm.subject)
+    formData.append("body", emailForm.body)
+    formData.append("zip_output", String(batchZipOutput))
+
+    try {
+      const response = await fetch(`${BACKEND_BASE}/send-mail-batch`, {
+        method: "POST",
+        body: formData,
+      })
+
+      const rawText = await response.text()
+      let payload: BatchMailResponse | { error?: string } = { error: "Unknown response" }
+      if (rawText) {
+        try {
+          payload = JSON.parse(rawText) as BatchMailResponse
+        } catch {
+          payload = { error: rawText }
+        }
+      }
+
+      if (!response.ok) {
+        const batchPayload = payload as BatchMailResponse
+        if (Array.isArray(batchPayload.details)) {
+          setBatchResult(batchPayload)
+        }
+
+        throw new Error(
+          (typeof payload === "object" &&
+            payload !== null &&
+            "error" in payload &&
+            typeof payload.error === "string" &&
+            payload.error) ||
+            (typeof payload === "object" &&
+              payload !== null &&
+              "message" in payload &&
+              typeof payload.message === "string" &&
+              payload.message) ||
+            `Request failed with status ${response.status}`,
+        )
+      }
+
+      setBatchResult((current) => ({
+        ...current,
+        ...(payload as BatchMailResponse),
+        download_url:
+          (payload as BatchMailResponse).download_url ?? current?.download_url ?? null,
+        download_artifact:
+          (payload as BatchMailResponse).download_artifact ?? current?.download_artifact ?? null,
+      }))
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to send the sanitized batch email."
+      setBatchError(message)
+    } finally {
+      setIsSendingEmail(false)
+    }
+  }
+
+  const handleBatchPrepare = async () => {
+    if (!selectedBatchFiles.length) {
+      setBatchError("No files are queued for clean batch preparation.")
+      return
+    }
+
+    setIsPreparingBatch(true)
+    setBatchError(null)
+
+    const formData = new FormData()
+    for (const file of selectedBatchFiles) {
+      formData.append("files", file)
+    }
+    formData.append("zip_output", "true")
+
+    try {
+      const response = await fetch(`${BACKEND_BASE}/strip-batch`, {
+        method: "POST",
+        body: formData,
+      })
+
+      const rawText = await response.text()
+      let payload: BatchMailResponse | { error?: string } = { error: "Unknown response" }
+      if (rawText) {
+        try {
+          payload = JSON.parse(rawText) as BatchMailResponse
+        } catch {
+          payload = { error: rawText }
+        }
+      }
+
+      const batchPayload = payload as BatchMailResponse
+      if (Array.isArray(batchPayload.details)) {
+        setBatchResult(batchPayload)
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          (typeof payload === "object" &&
+            payload !== null &&
+            "error" in payload &&
+            typeof payload.error === "string" &&
+            payload.error) ||
+            (typeof payload === "object" &&
+              payload !== null &&
+              "message" in payload &&
+              typeof payload.message === "string" &&
+              payload.message) ||
+            `Request failed with status ${response.status}`,
+        )
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to prepare the sanitized batch ZIP."
+      setBatchError(message)
+    } finally {
+      setIsPreparingBatch(false)
+    }
+  }
+
+  const handleDownloadBatchClean = () => {
+    if (!batchResult?.download_url) {
+      return
+    }
+
+    const target = batchResult.download_url.startsWith("/backend")
+      ? batchResult.download_url
+      : `${BACKEND_BASE}${batchResult.download_url}`
+    window.location.assign(target)
+  }
+
   const handleDownloadOriginal = () => {
     if (!uploadedFilename) {
       return
@@ -1581,7 +2136,7 @@ export default function OpaquePage() {
 
         {stage === "upload" ? (
           <div className="animate-in fade-in duration-500">
-            <UploadPane onFileUpload={handleFileUpload} error={scanError ?? actionError} />
+            <UploadPane onFilesSelected={handleFilesSelected} error={scanError ?? actionError} />
           </div>
         ) : null}
 
@@ -1622,6 +2177,24 @@ export default function OpaquePage() {
               onReset={resetWorkflow}
             />
           </div>
+        ) : null}
+
+        {stage === "batch" ? (
+          <BatchPane
+            files={selectedBatchFiles}
+            emailForm={emailForm}
+            zipOutput={batchZipOutput}
+            isPreparing={isPreparingBatch}
+            isSending={isSendingEmail}
+            error={batchError}
+            result={batchResult}
+            onEmailFieldChange={handleEmailFieldChange}
+            onZipOutputChange={setBatchZipOutput}
+            onPrepare={handleBatchPrepare}
+            onSend={handleBatchSend}
+            onDownloadPrepared={handleDownloadBatchClean}
+            onReset={resetWorkflow}
+          />
         ) : null}
 
         <footer className="pt-8 text-center text-xs text-muted-foreground">

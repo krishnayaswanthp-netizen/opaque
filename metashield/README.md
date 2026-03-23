@@ -11,6 +11,8 @@ metashield/
 |-- exif_stripper.py      # metadata parsing and stripping
 |-- document_scanner.py   # PDF / DOCX metadata scanning
 |-- document_cleaner.py   # PDF / DOCX metadata sanitization
+|-- services/            # batch processing + email helpers
+|-- routes/              # Flask route modules
 |-- dlp_interceptor.py    # mock email interceptor / DLP flow
 |-- app.py                # Flask backend + legacy web UI
 |-- test_cli.py           # CLI demo runner
@@ -229,6 +231,49 @@ environment variables are:
 
 `SMTP_DEFAULT_SENDER` is optional. If you leave it blank, the UI will ask for
 the sender email address when you send the sanitized attachment.
+
+## Batch mail endpoint
+
+Meta-Shield also exposes a batch mail route for dashboard-style workflows:
+
+```text
+POST /send-mail-batch
+```
+
+It accepts multipart form data with:
+
+- `files`: multiple uploaded files
+- `recipient` or `recipients`: recipient email address
+- `sender`: optional sender email
+- `subject`: optional subject
+- `body`: optional email body
+- `zip_output`: optional boolean (`true` by default) to send one ZIP instead of many attachments
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:5000/send-mail-batch \
+  -F "recipient=client@example.com" \
+  -F "sender=analyst@example.com" \
+  -F "subject=Sanitized batch" \
+  -F "zip_output=true" \
+  -F "files=@photo.jpg" \
+  -F "files=@report.pdf" \
+  -F "files=@draft.docx"
+```
+
+The backend processes every file, continues past per-file failures, sends exactly one email,
+and returns a JSON summary with processed and failed counts plus per-file details.
+
+For download-only workflows, Meta-Shield also exposes:
+
+```text
+POST /strip-batch
+GET /download_batch_clean?artifact=<name>
+```
+
+The dashboard uses this path to prepare one clean ZIP of the selected files even when SMTP
+is not configured.
 
 ## What gets stripped
 

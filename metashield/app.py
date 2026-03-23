@@ -14,6 +14,7 @@ from werkzeug.utils import secure_filename
 from document_scanner import extract_document_report, is_document_file
 from dlp_interceptor import DLPInterceptor
 from exif_stripper import extract_metadata_report
+from routes.batch_mail import create_batch_mail_blueprint
 
 
 app = Flask(__name__)
@@ -456,6 +457,7 @@ CLEAN_PATH = None
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 DOCUMENT_EXTENSIONS = {".pdf", ".docx"}
 ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
+app.register_blueprint(create_batch_mail_blueprint(BASE_DIR))
 
 
 def _load_local_env_file(env_path: Path) -> None:
