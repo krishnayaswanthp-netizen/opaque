@@ -4,6 +4,7 @@ Simulates an email gateway that intercepts outgoing emails,
 strips EXIF from attachments, and forwards a clean email.
 """
 
+
 import json
 import smtplib
 from datetime import datetime

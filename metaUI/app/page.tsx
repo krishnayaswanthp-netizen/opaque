@@ -12,8 +12,10 @@ import {
   FileImage,
   FileWarning,
   Loader2,
+  Mail,
   MapPin,
   RotateCcw,
+  SendHorizontal,
   Shield,
   ShieldCheck,
   Smartphone,
@@ -85,10 +87,33 @@ interface StripResponse {
   duration_ms: number
   audit: AuditReport
   clean_file: string
+  smtp_enabled?: boolean
+  smtp_default_sender?: string | null
 }
 
 interface UploadResponse {
   filename: string
+}
+
+interface EmailFormState {
+  sender: string
+  recipients: string
+  subject: string
+  body: string
+}
+
+interface SendEmailResponse {
+  message: string
+  email_sent: boolean
+  sender: string
+  recipients: string[]
+  subject: string
+  duration_ms: number
+  clean_file?: string | null
+  clean_email_output?: string | null
+  audit_report_output?: string | null
+  smtp_enabled?: boolean
+  smtp_default_sender?: string | null
 }
 
 interface ScanLogEntry {
@@ -1004,6 +1029,12 @@ function ActionPane({
   stripResult,
   isCleaning,
   error,
+  emailForm,
+  isSendingEmail,
+  emailError,
+  emailResult,
+  onEmailFieldChange,
+  onSendEmail,
   onClean,
   onDownloadOriginal,
   onDownloadClean,
@@ -1013,6 +1044,12 @@ function ActionPane({
   stripResult: StripResponse | null
   isCleaning: boolean
   error?: string | null
+  emailForm: EmailFormState
+  isSendingEmail: boolean
+  emailError?: string | null
+  emailResult: SendEmailResponse | null
+  onEmailFieldChange: (field: keyof EmailFormState, value: string) => void
+  onSendEmail: () => void | Promise<void>
   onClean: () => void | Promise<void>
   onDownloadOriginal: () => void
   onDownloadClean: () => void
@@ -1020,56 +1057,184 @@ function ActionPane({
 }) {
   const hasSensitiveMetadata =
     report.sensitive_tag_count > 0 || report.thumbnail_present || Boolean(report.gps_warning)
+  const smtpEnabled = Boolean(stripResult?.smtp_enabled)
 
   if (stripResult) {
     return (
-      <div
-        className={`glass-panel rounded-xl p-8 ${stripResult.success ? "neon-glow-green border-neon-green/30" : "border-neon-yellow/30"}`}
-      >
-        <div className="flex flex-col items-center gap-6 text-center">
-          <div className="relative">
-            <div className="rounded-full bg-neon-green/20 p-4">
-              <CheckCircle2 className="h-12 w-12 text-neon-green" />
+      <div className="space-y-6">
+        <div
+          className={`glass-panel rounded-xl p-8 ${stripResult.success ? "neon-glow-green border-neon-green/30" : "border-neon-yellow/30"}`}
+        >
+          <div className="flex flex-col items-center gap-6 text-center">
+            <div className="relative">
+              <div className="rounded-full bg-neon-green/20 p-4">
+                <CheckCircle2 className="h-12 w-12 text-neon-green" />
+              </div>
+              <div className="absolute inset-0 animate-pulse rounded-full bg-neon-green/30 blur-xl" />
             </div>
-            <div className="absolute inset-0 animate-pulse rounded-full bg-neon-green/30 blur-xl" />
-          </div>
 
-          <div>
-            <h3 className="text-2xl font-bold text-neon-green neon-text-green">
-              {stripResult.success ? "File Secured" : "Sanitization Completed With Warnings"}
+            <div>
+              <h3 className="text-2xl font-bold text-neon-green neon-text-green">
+                {stripResult.success ? "File Secured" : "Sanitization Completed With Warnings"}
+              </h3>
+              <p className="mt-2 max-w-2xl text-muted-foreground">
+                {stripResult.success
+                  ? "The clean artifact has been generated and verified through the Meta-Shield DLP pipeline."
+                  : "The artifact was generated, but the verification step still sees some residual metadata. Review the report before sharing."}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
+              <Button
+                onClick={onDownloadClean}
+                className="rounded-xl bg-neon-green px-6 py-6 font-semibold text-background transition-all duration-300 hover:scale-105 hover:bg-neon-green/90"
+              >
+                <Download className="mr-2 h-5 w-5" />
+                Download Clean File
+              </Button>
+              <Button
+                onClick={onDownloadOriginal}
+                variant="outline"
+                className="rounded-xl border-border bg-background/40 px-6 py-6 transition-all duration-300 hover:border-neon-blue hover:text-neon-blue"
+              >
+                <Download className="mr-2 h-5 w-5" />
+                Download Original
+              </Button>
+              <Button
+                onClick={onReset}
+                variant="outline"
+                className="rounded-xl border-border bg-background/40 px-6 py-6 transition-all duration-300 hover:border-neon-blue hover:text-neon-blue"
+              >
+                <RotateCcw className="mr-2 h-5 w-5" />
+                Scan Another
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-panel rounded-xl p-6 space-y-5">
+          <div className="flex items-center gap-2">
+            <Mail className="h-5 w-5 text-neon-blue" />
+            <h3 className="text-lg font-semibold text-foreground">
+              Send Sanitized Email
             </h3>
-            <p className="mt-2 max-w-2xl text-muted-foreground">
-              {stripResult.success
-                ? "The clean artifact has been generated and verified through the Meta-Shield DLP pipeline."
-                : "The artifact was generated, but the verification step still sees some residual metadata. Review the report before sharing."}
-            </p>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
-            <Button
-              onClick={onDownloadClean}
-              className="rounded-xl bg-neon-green px-6 py-6 font-semibold text-background transition-all duration-300 hover:scale-105 hover:bg-neon-green/90"
-            >
-              <Download className="mr-2 h-5 w-5" />
-              Download Clean File
-            </Button>
-            <Button
-              onClick={onDownloadOriginal}
-              variant="outline"
-              className="rounded-xl border-border bg-background/40 px-6 py-6 transition-all duration-300 hover:border-neon-blue hover:text-neon-blue"
-            >
-              <Download className="mr-2 h-5 w-5" />
-              Download Original
-            </Button>
-            <Button
-              onClick={onReset}
-              variant="outline"
-              className="rounded-xl border-border bg-background/40 px-6 py-6 transition-all duration-300 hover:border-neon-blue hover:text-neon-blue"
-            >
-              <RotateCcw className="mr-2 h-5 w-5" />
-              Scan Another
-            </Button>
-          </div>
+          {smtpEnabled ? (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Meta-Shield will send the sanitized attachment through the configured SMTP
+                server. The original uploaded image never leaves the app unchanged.
+              </p>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                    Sender
+                  </span>
+                  <input
+                    type="email"
+                    value={emailForm.sender}
+                    onChange={(event) => onEmailFieldChange("sender", event.target.value)}
+                    placeholder="sender@example.com"
+                    className="w-full rounded-xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-neon-blue"
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                    Recipients
+                  </span>
+                  <input
+                    type="text"
+                    value={emailForm.recipients}
+                    onChange={(event) => onEmailFieldChange("recipients", event.target.value)}
+                    placeholder="alice@example.com, bob@example.com"
+                    className="w-full rounded-xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-neon-blue"
+                  />
+                </label>
+              </div>
+
+              <label className="space-y-2 block">
+                <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Subject
+                </span>
+                <input
+                  type="text"
+                  value={emailForm.subject}
+                  onChange={(event) => onEmailFieldChange("subject", event.target.value)}
+                  placeholder="Sanitized image from Meta-Shield"
+                  className="w-full rounded-xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-neon-blue"
+                />
+              </label>
+
+              <label className="space-y-2 block">
+                <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Body
+                </span>
+                <textarea
+                  value={emailForm.body}
+                  onChange={(event) => onEmailFieldChange("body", event.target.value)}
+                  rows={5}
+                  placeholder="This attachment was sanitized by Meta-Shield before being shared."
+                  className="w-full rounded-xl border border-border bg-background/40 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-neon-blue"
+                />
+              </label>
+
+              <div className="flex flex-wrap items-center gap-4">
+                <Button
+                  onClick={() => void onSendEmail()}
+                  disabled={isSendingEmail}
+                  className="rounded-xl bg-gradient-to-r from-neon-blue to-neon-green px-6 py-6 font-semibold text-background transition-all duration-300 hover:scale-[1.01] hover:from-neon-blue/90 hover:to-neon-green/90"
+                >
+                  {isSendingEmail ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Sending Sanitized Email...
+                    </>
+                  ) : (
+                    <>
+                      <SendHorizontal className="mr-2 h-5 w-5" />
+                      Send Sanitized Email
+                    </>
+                  )}
+                </Button>
+
+                {stripResult.smtp_default_sender ? (
+                  <span className="text-xs text-muted-foreground">
+                    Default sender from backend: {stripResult.smtp_default_sender}
+                  </span>
+                ) : null}
+              </div>
+
+              {emailError ? (
+                <div className="rounded-xl border border-neon-red/30 bg-neon-red/10 p-4 text-sm text-neon-red">
+                  {emailError}
+                </div>
+              ) : null}
+
+              {emailResult ? (
+                <div className="space-y-2 rounded-xl border border-neon-green/30 bg-neon-green/10 p-4 text-sm">
+                  <p className="font-semibold text-neon-green">{emailResult.message}</p>
+                  <p className="text-foreground">Sender: {emailResult.sender}</p>
+                  <p className="text-foreground">
+                    Recipients: {emailResult.recipients.join(", ")}
+                  </p>
+                  <p className="text-foreground">
+                    Duration: {emailResult.duration_ms} ms
+                  </p>
+                  <p className="text-foreground break-words">
+                    Clean email artifact: {emailResult.clean_email_output ?? "N/A"}
+                  </p>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="rounded-xl border border-neon-yellow/30 bg-neon-yellow/10 p-4 text-sm text-foreground">
+              SMTP is not configured on the backend yet. Set `SMTP_HOST` and restart the
+              Flask server to enable in-app sending.
+            </div>
+          )}
         </div>
       </div>
     )
@@ -1141,6 +1306,15 @@ export default function OpaquePage() {
   const [scanError, setScanError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [isCleaning, setIsCleaning] = useState(false)
+  const [emailForm, setEmailForm] = useState<EmailFormState>({
+    sender: "",
+    recipients: "",
+    subject: "",
+    body: "",
+  })
+  const [isSendingEmail, setIsSendingEmail] = useState(false)
+  const [emailError, setEmailError] = useState<string | null>(null)
+  const [emailResult, setEmailResult] = useState<SendEmailResponse | null>(null)
 
   const appendScanLog = (message: string, status: ScanLogEntry["status"]) => {
     setScanLogs((current) => [...current, buildLogEntry(message, status)])
@@ -1157,6 +1331,15 @@ export default function OpaquePage() {
     setScanError(null)
     setActionError(null)
     setIsCleaning(false)
+    setEmailForm({
+      sender: "",
+      recipients: "",
+      subject: "",
+      body: "",
+    })
+    setIsSendingEmail(false)
+    setEmailError(null)
+    setEmailResult(null)
   }
 
   const handleFileUpload = async (file: File) => {
@@ -1272,12 +1455,70 @@ export default function OpaquePage() {
       )
 
       setStripResult(result)
+      setEmailError(null)
+      setEmailResult(null)
+      setEmailForm((current) => ({
+        sender: current.sender || result.smtp_default_sender || "",
+        recipients: current.recipients,
+        subject:
+          current.subject ||
+          `Sanitized image from Meta-Shield: ${sourceFileName ?? uploadedFilename}`,
+        body:
+          current.body ||
+          "This attachment was sanitized by Meta-Shield before being shared.",
+      }))
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unable to generate a clean artifact."
       setActionError(message)
     } finally {
       setIsCleaning(false)
+    }
+  }
+
+  const handleEmailFieldChange = (field: keyof EmailFormState, value: string) => {
+    setEmailForm((current) => ({
+      ...current,
+      [field]: value,
+    }))
+  }
+
+  const handleSendEmail = async () => {
+    if (!uploadedFilename) {
+      setEmailError("No uploaded file is available to send.")
+      return
+    }
+
+    setIsSendingEmail(true)
+    setEmailError(null)
+    setEmailResult(null)
+
+    try {
+      const result = await parseJsonResponse<SendEmailResponse>(
+        await fetch(`${BACKEND_BASE}/send_email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: uploadedFilename,
+            sender: emailForm.sender,
+            recipients: emailForm.recipients,
+            subject: emailForm.subject,
+            body: emailForm.body,
+          }),
+        }),
+      )
+
+      setEmailResult(result)
+      setEmailForm((current) => ({
+        ...current,
+        sender: result.sender || current.sender,
+      }))
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to send the sanitized email."
+      setEmailError(message)
+    } finally {
+      setIsSendingEmail(false)
     }
   }
 
@@ -1338,6 +1579,12 @@ export default function OpaquePage() {
               stripResult={stripResult}
               isCleaning={isCleaning}
               error={actionError}
+              emailForm={emailForm}
+              isSendingEmail={isSendingEmail}
+              emailError={emailError}
+              emailResult={emailResult}
+              onEmailFieldChange={handleEmailFieldChange}
+              onSendEmail={handleSendEmail}
               onClean={handleStrip}
               onDownloadOriginal={handleDownloadOriginal}
               onDownloadClean={handleDownloadClean}

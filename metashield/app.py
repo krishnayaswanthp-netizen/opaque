@@ -4,6 +4,7 @@ Upload an image, inspect its metadata, then strip it through the DLP flow.
 """
 
 import os
+from email.utils import getaddresses
 from pathlib import Path
 from uuid import uuid4
 
@@ -454,8 +455,99 @@ CLEAN_PATH = None
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 
 
+def _load_local_env_file(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+
+        os.environ.setdefault(key, value)
+
+
+_load_local_env_file(BASE_DIR / ".env")
+
+
 def _is_allowed_file(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _smtp_settings() -> dict:
+    host = (os.getenv("SMTP_HOST") or "").strip()
+    port_raw = (os.getenv("SMTP_PORT") or "587").strip()
+
+    try:
+        port = int(port_raw)
+    except ValueError as exc:
+        raise ValueError("SMTP_PORT must be a valid integer") from exc
+
+    default_sender = (
+        os.getenv("SMTP_DEFAULT_SENDER")
+        or os.getenv("SMTP_FROM")
+        or os.getenv("SMTP_USER")
+        or ""
+    ).strip()
+
+    return {
+        "enabled": bool(host),
+        "smtp_host": host or None,
+        "smtp_port": port,
+        "smtp_user": (os.getenv("SMTP_USER") or "").strip() or None,
+        "smtp_pass": (os.getenv("SMTP_PASS") or "").strip() or None,
+        "use_tls": _env_flag("SMTP_USE_TLS", default=True),
+        "default_sender": default_sender or None,
+    }
+
+
+def _build_smtp_interceptor() -> tuple[DLPInterceptor, dict]:
+    settings = _smtp_settings()
+    if not settings["enabled"]:
+        raise RuntimeError(
+            "SMTP is not configured. Set SMTP_HOST (and optional SMTP_PORT, "
+            "SMTP_USER, SMTP_PASS, SMTP_USE_TLS, SMTP_DEFAULT_SENDER) and restart the backend."
+        )
+
+    interceptor = DLPInterceptor(
+        smtp_host=settings["smtp_host"],
+        smtp_port=settings["smtp_port"],
+        smtp_user=settings["smtp_user"],
+        smtp_pass=settings["smtp_pass"],
+        use_tls=settings["use_tls"],
+    )
+    return interceptor, settings
+
+
+def _parse_recipients(raw_value) -> list[str]:
+    if isinstance(raw_value, str):
+        sources = [raw_value]
+    elif isinstance(raw_value, list):
+        sources = [str(item) for item in raw_value if str(item).strip()]
+    else:
+        sources = []
+
+    parsed = [address.strip() for _, address in getaddresses(sources) if address.strip()]
+    unique = list(dict.fromkeys(parsed))
+    if not unique:
+        raise ValueError("At least one valid recipient email address is required")
+    return unique
 
 
 def _resolve_uploaded_path(filename: str):
@@ -550,8 +642,97 @@ def strip():
         "duration_ms": audit["duration_ms"],
         "audit": audit,
         "clean_file": CLEAN_PATH,
+        "smtp_enabled": _smtp_settings()["enabled"],
+        "smtp_default_sender": _smtp_settings()["default_sender"],
     }
     return jsonify(response)
+
+
+@app.route("/send_email", methods=["POST"])
+def send_email():
+    global CLEAN_PATH
+
+    data = request.get_json(silent=True) or {}
+    filename = data.get("filename")
+    subject = (data.get("subject") or "").strip()
+    body = (data.get("body") or "").strip()
+
+    if not filename:
+        return jsonify({"error": "Missing filename"}), 400
+
+    try:
+        recipients = _parse_recipients(data.get("recipients"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    try:
+        safe_name, image_path = _resolve_uploaded_path(filename)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    try:
+        interceptor, smtp_settings = _build_smtp_interceptor()
+    except (RuntimeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    sender = (data.get("sender") or smtp_settings["default_sender"] or "").strip()
+    if not sender:
+        return jsonify(
+            {
+                "error": (
+                    "A sender email address is required. Provide one in the form or set "
+                    "SMTP_DEFAULT_SENDER / SMTP_FROM on the backend."
+                )
+            }
+        ), 400
+
+    email_subject = subject or f"Sanitized image from Meta-Shield: {safe_name}"
+    email_body = body or (
+        "This attachment was sanitized by Meta-Shield before being sent."
+    )
+
+    try:
+        audit = interceptor.intercept(
+            sender=sender,
+            recipients=recipients,
+            subject=email_subject,
+            body=email_body,
+            attachments=[image_path],
+            send_email=True,
+        )
+    except Exception as exc:
+        return jsonify({"error": f"SMTP delivery failed: {exc}"}), 500
+
+    attachment_report = next(
+        (item for item in audit["attachment_reports"] if item.get("before")),
+        None,
+    )
+    if attachment_report:
+        CLEAN_PATH = (
+            attachment_report.get("artifact_output_file")
+            or attachment_report.get("output_file")
+            or CLEAN_PATH
+        )
+
+    return jsonify(
+        {
+            "message": f"Sanitized email sent to {', '.join(recipients)}",
+            "email_sent": audit.get("email_sent", False),
+            "sender": sender,
+            "recipients": recipients,
+            "subject": email_subject,
+            "duration_ms": audit["duration_ms"],
+            "clean_file": CLEAN_PATH,
+            "clean_email_output": audit.get("clean_email_output"),
+            "audit_report_output": audit.get("audit_report_output"),
+            "attachment_report": attachment_report,
+            "audit": audit,
+            "smtp_enabled": smtp_settings["enabled"],
+            "smtp_default_sender": smtp_settings["default_sender"],
+        }
+    )
 
 
 @app.route("/download_clean")

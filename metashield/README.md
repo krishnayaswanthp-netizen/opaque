@@ -68,6 +68,31 @@ This starts the Flask backend on:
 http://127.0.0.1:5000
 ```
 
+Optional SMTP settings for in-app email sending:
+
+1. Create a local `.env` file in `metashield/`.
+You can copy `.env.example` to `.env`.
+
+2. Put only SMTP transport settings in that file:
+
+```text
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=you@example.com
+SMTP_PASS=your_app_password
+SMTP_USE_TLS=true
+SMTP_DEFAULT_SENDER=
+```
+
+3. Start the backend normally:
+
+```bash
+python app.py
+```
+
+If `SMTP_HOST` is not set in `.env`, the scan/strip/download flow still works, but the
+"Send Sanitized Email" action in the UI stays disabled.
+
 ### 5. Run the integrated `metaUI` frontend
 
 In a second terminal:
@@ -114,6 +139,9 @@ http://127.0.0.1:5000
 ```
 
 Both UIs only analyze files you explicitly upload from your machine.
+When SMTP is configured on the backend, the integrated `metaUI` flow can also
+send a sanitized attachment directly from the application after stripping.
+The sender, recipients, subject, and body are entered in the UI, not in the CLI.
 
 ## Supported input formats
 
@@ -172,6 +200,19 @@ audit = dlp.intercept(
     send_email=True,
 )
 ```
+
+The web app uses the same interceptor internally. The SMTP-related backend
+environment variables are:
+
+- `SMTP_HOST`
+- `SMTP_PORT` (defaults to `587`)
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_USE_TLS` (`true` by default)
+- `SMTP_DEFAULT_SENDER` or `SMTP_FROM`
+
+`SMTP_DEFAULT_SENDER` is optional. If you leave it blank, the UI will ask for
+the sender email address when you send the sanitized attachment.
 
 ## What gets stripped
 
