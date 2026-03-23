@@ -1,7 +1,7 @@
 """
 Meta-Shield: Mock DLP Email Interceptor
 Simulates an email gateway that intercepts outgoing emails,
-strips EXIF from attachments, and forwards a clean email.
+strips sensitive metadata from attachments, and forwards a clean email.
 """
 
 
@@ -14,6 +14,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+from document_cleaner import strip_document_metadata
+from document_scanner import DOCUMENT_EXTENSIONS
 from exif_stripper import strip_metadata
 
 
@@ -24,7 +26,7 @@ DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "outputs"
 class DLPInterceptor:
     """
     Zero-Trust Email Interceptor.
-    Intercepts an outgoing email, strips EXIF from image attachments,
+    Intercepts an outgoing email, strips sensitive metadata from supported attachments,
     and optionally forwards the sanitized email via SMTP.
     """
 
@@ -58,7 +60,7 @@ class DLPInterceptor:
         """
         Full interception pipeline:
         1. Scan attachments for metadata
-        2. Strip EXIF from image attachments
+        2. Strip metadata from supported attachments
         3. Build a clean email
         4. Optionally send it via SMTP
         """
@@ -70,6 +72,7 @@ class DLPInterceptor:
             "subject": subject,
             "total_attachments": len(attachments),
             "images_processed": 0,
+            "documents_processed": 0,
             "non_image_attachments": 0,
             "total_tags_removed": 0,
             "attachment_reports": [],
@@ -93,8 +96,24 @@ class DLPInterceptor:
 
                 result = strip_metadata(str(attachment_path), str(artifact_clean_path))
                 result["artifact_output_file"] = str(artifact_clean_path)
+                result["file_type"] = result.get("file_type") or "image"
+                if isinstance(result.get("before"), dict):
+                    result["before"].setdefault("file_type", "image")
+                if isinstance(result.get("after"), dict):
+                    result["after"].setdefault("file_type", "image")
 
                 audit["images_processed"] += 1
+                audit["total_tags_removed"] += result["tags_removed"]
+                audit["attachment_reports"].append(result)
+                clean_attachments.append(artifact_clean_path)
+            elif extension in DOCUMENT_EXTENSIONS:
+                clean_name = f"clean_{index}_{attachment_path.stem}{extension}"
+                artifact_clean_path = self.artifact_dir / clean_name
+
+                result = strip_document_metadata(str(attachment_path), str(artifact_clean_path))
+                result["artifact_output_file"] = str(artifact_clean_path)
+
+                audit["documents_processed"] += 1
                 audit["total_tags_removed"] += result["tags_removed"]
                 audit["attachment_reports"].append(result)
                 clean_attachments.append(artifact_clean_path)
@@ -137,12 +156,12 @@ class DLPInterceptor:
         msg["From"] = sender
         msg["To"] = ", ".join(recipients)
         msg["Subject"] = f"[META-SHIELD SANITIZED] {subject}"
-        msg["X-MetaShield"] = "EXIF-stripped by Meta-Shield DLP v1.0"
+        msg["X-MetaShield"] = "Metadata-sanitized by Meta-Shield DLP v1.0"
 
         msg.attach(
             MIMEText(
                 body
-                + "\n\n---\n[Meta-Shield] This email was processed and image metadata was stripped.",
+                + "\n\n---\n[Meta-Shield] This email was processed and supported attachment metadata was stripped.",
                 "plain",
             )
         )

@@ -9,6 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from document_cleaner import strip_document_metadata
+from document_scanner import extract_document_report, is_document_file
 from dlp_interceptor import DLPInterceptor
 from exif_stripper import extract_metadata_report, strip_metadata
 
@@ -21,6 +23,7 @@ def print_section(title):
 
 def print_report(report):
     risk = report["risk_level"]
+    file_type = report.get("file_type", "image")
     colors = {
         "CRITICAL": "\033[91m",
         "HIGH": "\033[93m",
@@ -31,11 +34,14 @@ def print_report(report):
     color = colors.get(risk, "")
 
     print(f"\n  Risk Level : {color}{risk}{reset}")
+    print(f"  File Type  : {file_type}")
     print(f"  File Size  : {report['file_size_kb']} KB")
     print(
-        f"  EXIF Tags  : {report['raw_tag_count']} total, "
+        f"  Meta Tags  : {report['raw_tag_count']} total, "
         f"{report['sensitive_tag_count']} sensitive"
     )
+    if "score" in report:
+        print(f"  Risk Score : {report.get('score', 0)}")
     if report.get("thumbnail_present"):
         print(
             f"  Thumbnail  : PRESENT ({round(report['thumbnail_size_bytes'] / 1024, 1)} KB)"
@@ -64,45 +70,66 @@ def print_report(report):
         for key, value in report["other_pii"].items():
             print(f"     {key:20}: {value}")
 
+    if report.get("contains_hidden_data"):
+        print("\n  \033[91mHIDDEN DATA\033[0m")
+        print("     Hidden comments, revisions, or embedded objects were detected.")
+
     if report.get("risk_reasons"):
         print("\n  Reasons:")
         for reason in report["risk_reasons"]:
             print(f"    - {reason}")
 
+    if report.get("recommendations"):
+        print("\n  Recommendations:")
+        for recommendation in report["recommendations"]:
+            print(f"    - {recommendation}")
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Scan a user-provided image, strip metadata, and run the DLP flow.",
+        description="Scan a user-provided file, strip metadata, and run the DLP flow.",
     )
-    parser.add_argument("image_path", help="Path to the image file you want to process")
+    parser.add_argument("file_path", help="Path to the file you want to process")
     args = parser.parse_args()
 
-    source_path = Path(args.image_path).expanduser()
+    source_path = Path(args.file_path).expanduser()
     if not source_path.exists():
         raise FileNotFoundError(f"Input file not found: {source_path}")
 
     outputs_dir = Path("outputs")
     outputs_dir.mkdir(exist_ok=True)
-    clean_img = outputs_dir / f"clean_{source_path.stem}.jpg"
+    clean_file = outputs_dir / f"clean_{source_path.stem}{source_path.suffix.lower()}"
+
+    if is_document_file(source_path.name):
+        scan_file = extract_document_report
+        clean_metadata = strip_document_metadata
+    else:
+        scan_file = extract_metadata_report
+        clean_metadata = strip_metadata
+        clean_file = outputs_dir / f"clean_{source_path.stem}.jpg"
 
     print("\n\033[92mMETA-SHIELD - CLI Demo\033[0m")
     print("Zero-Trust Email Interceptor\n")
 
     print_section("1 / 4 - Scanning metadata before stripping")
-    before = extract_metadata_report(str(source_path))
+    before = scan_file(str(source_path))
     print_report(before)
 
     print_section("2 / 4 - Stripping all metadata")
-    result = strip_metadata(str(source_path), str(clean_img))
+    result = clean_metadata(str(source_path), str(clean_file))
     print(f"\n  Tags removed : {result['tags_removed']}")
     print(f"  Size before  : {result['size_before_kb']} KB")
     print(f"  Size after   : {result['size_after_kb']} KB")
 
     print_section("3 / 4 - Verifying after stripping")
-    after = extract_metadata_report(str(clean_img))
+    after = scan_file(str(clean_file))
     print_report(after)
 
-    passed = after["sensitive_tag_count"] == 0 and after["gps"] is None
+    passed = (
+        after["sensitive_tag_count"] == 0
+        and after.get("gps") is None
+        and not after.get("contains_hidden_data", False)
+    )
     if passed:
         print("\n  \033[92mVERIFICATION PASSED - zero sensitive tags remain\033[0m")
     else:
@@ -113,7 +140,7 @@ def main():
     audit = dlp.intercept(
         sender="arjun@corp.com",
         recipients=["client@external.com"],
-        subject=f"Image upload: {source_path.name}",
+        subject=f"File upload: {source_path.name}",
         body="Attachment supplied by the user and processed by Meta-Shield.",
         attachments=[str(source_path)],
         send_email=False,
@@ -128,9 +155,10 @@ def main():
     print(f"  Sender          : {audit['sender']}")
     print(f"  Recipients      : {', '.join(audit['recipients'])}")
     print(f"  Images processed: {audit['images_processed']}")
+    print(f"  Docs processed  : {audit.get('documents_processed', 0)}")
     print(f"  Tags removed    : {audit['total_tags_removed']}")
     print(
-        f"  Clean image     : "
+        f"  Clean file      : "
         f"{first_attachment.get('artifact_output_file', 'N/A') if first_attachment else 'N/A'}"
     )
     print(f"  Clean .eml      : {audit.get('clean_email_output', 'N/A')}")

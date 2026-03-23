@@ -1,6 +1,6 @@
 """
 Meta-Shield: Web Demo Interface
-Upload an image, inspect its metadata, then strip it through the DLP flow.
+Upload a file, inspect its metadata, then strip it through the DLP flow.
 """
 
 import os
@@ -11,6 +11,7 @@ from uuid import uuid4
 from flask import Flask, jsonify, render_template_string, request, send_file
 from werkzeug.utils import secure_filename
 
+from document_scanner import extract_document_report, is_document_file
 from dlp_interceptor import DLPInterceptor
 from exif_stripper import extract_metadata_report
 
@@ -191,12 +192,12 @@ HTML = """
 
 <div class="container">
   <div class="card" style="margin-bottom:24px;">
-    <h2>Step 1 - Upload Image</h2>
+    <h2>Step 1 - Upload File</h2>
     <div class="upload-zone" onclick="document.getElementById('fileInput').click()">
       <div style="font-size:2rem">[+]</div>
-      <strong>Click to upload an image</strong>
+      <strong>Click to upload a file</strong>
       <p>Meta-Shield only analyzes metadata from files you provide</p>
-      <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.tif,.tiff" onchange="handleFile(this)">
+      <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.tif,.tiff,.pdf,.docx" onchange="handleFile(this)">
     </div>
     <p id="status">No file selected.</p>
   </div>
@@ -218,7 +219,7 @@ HTML = """
       <h2>Step 3 - Forensically Clean (After)</h2>
       <div id="afterContent"></div>
       <button onclick="downloadClean()" style="margin-top:16px;">
-        Download clean image
+        Download clean file
       </button>
     </div>
   </div>
@@ -352,7 +353,7 @@ function renderBefore(report) {
     <div class="risk-bar risk-${report.risk_level}"></div>
     <div class="meta-item"><span class="meta-key">File: </span><span class="meta-val">${report.file}</span></div>
     <div class="meta-item"><span class="meta-key">Size: </span><span class="meta-val">${report.file_size_kb} KB</span></div>
-    <div class="meta-item"><span class="meta-key">Total EXIF tags: </span><span class="meta-val">${report.raw_tag_count}</span></div>
+    <div class="meta-item"><span class="meta-key">Total metadata tags: </span><span class="meta-val">${report.raw_tag_count}</span></div>
     <div class="meta-item"><span class="meta-key">Sensitive tags: </span><span class="meta-val danger">${report.sensitive_tag_count}</span></div>
   `;
 
@@ -432,7 +433,7 @@ function renderLog(result) {
 
   logContent.innerHTML = `
     <div class="log-line"><span class="ok">[INTERCEPT]</span> File intercepted before leaving the network</div>
-    <div class="log-line"><span class="ok">[PARSE]</span> Binary EXIF headers parsed - ${result.before.raw_tag_count} tags found</div>
+    <div class="log-line"><span class="ok">[PARSE]</span> Metadata parsed - ${result.before.raw_tag_count} tags found</div>
     <div class="log-line"><span class="err">[ALERT]</span> ${result.before.sensitive_tag_count} sensitive tags detected (risk: ${result.before.risk_level})</div>
     <div class="log-line"><span class="ok">[STRIP]</span> ${result.tags_removed} tags removed</div>
     <div class="log-line"><span class="ok">[VERIFY]</span> Post-strip scan: 0 sensitive tags remaining</div>
@@ -452,7 +453,9 @@ BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 CLEAN_PATH = None
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+DOCUMENT_EXTENSIONS = {".pdf", ".docx"}
+ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
 
 
 def _load_local_env_file(env_path: Path) -> None:
@@ -481,6 +484,15 @@ _load_local_env_file(BASE_DIR / ".env")
 
 def _is_allowed_file(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
+
+
+def _scan_uploaded_file(file_path: str) -> dict:
+    if is_document_file(file_path):
+        return extract_document_report(file_path)
+
+    report = extract_metadata_report(file_path)
+    report.setdefault("file_type", "image")
+    return report
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -591,13 +603,13 @@ def scan():
         return jsonify({"error": "Missing filename"}), 400
 
     try:
-        _, image_path = _resolve_uploaded_path(filename)
+        _, file_path = _resolve_uploaded_path(filename)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except FileNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
 
-    return jsonify(extract_metadata_report(image_path))
+    return jsonify(_scan_uploaded_file(file_path))
 
 
 @app.route("/strip", methods=["POST"])
@@ -610,7 +622,7 @@ def strip():
         return jsonify({"error": "Missing filename"}), 400
 
     try:
-        safe_name, image_path = _resolve_uploaded_path(filename)
+        safe_name, file_path = _resolve_uploaded_path(filename)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except FileNotFoundError as exc:
@@ -623,7 +635,7 @@ def strip():
             recipients=["outbound@example.com"],
             subject=f"Web upload: {safe_name}",
             body="Attachment processed through the Meta-Shield web demo.",
-            attachments=[image_path],
+            attachments=[file_path],
             send_email=False,
         )
     except Exception as exc:
@@ -634,7 +646,7 @@ def strip():
         None,
     )
     if not attachment_report:
-        return jsonify({"error": "No image attachment report was generated"}), 500
+        return jsonify({"error": "No attachment report was generated"}), 500
 
     CLEAN_PATH = attachment_report.get("artifact_output_file") or attachment_report["output_file"]
     response = {
@@ -666,7 +678,7 @@ def send_email():
         return jsonify({"error": str(exc)}), 400
 
     try:
-        safe_name, image_path = _resolve_uploaded_path(filename)
+        safe_name, file_path = _resolve_uploaded_path(filename)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except FileNotFoundError as exc:
@@ -688,7 +700,7 @@ def send_email():
             }
         ), 400
 
-    email_subject = subject or f"Sanitized image from Meta-Shield: {safe_name}"
+    email_subject = subject or f"Sanitized file from Meta-Shield: {safe_name}"
     email_body = body or (
         "This attachment was sanitized by Meta-Shield before being sent."
     )
@@ -699,7 +711,7 @@ def send_email():
             recipients=recipients,
             subject=email_subject,
             body=email_body,
-            attachments=[image_path],
+            attachments=[file_path],
             send_email=True,
         )
     except Exception as exc:

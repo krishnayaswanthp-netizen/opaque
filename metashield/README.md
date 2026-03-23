@@ -1,13 +1,16 @@
 # Meta-Shield
 
-Meta-Shield is a small Python demo that scans image metadata, strips sensitive EXIF fields,
-and simulates a DLP gateway sanitizing email attachments before they leave the network.
+Meta-Shield is a small Python demo that scans file metadata, strips sensitive fields from
+images and documents, and simulates a DLP gateway sanitizing email attachments before they
+leave the network.
 
 ## Project layout
 
 ```text
 metashield/
 |-- exif_stripper.py      # metadata parsing and stripping
+|-- document_scanner.py   # PDF / DOCX metadata scanning
+|-- document_cleaner.py   # PDF / DOCX metadata sanitization
 |-- dlp_interceptor.py    # mock email interceptor / DLP flow
 |-- app.py                # Flask backend + legacy web UI
 |-- test_cli.py           # CLI demo runner
@@ -42,17 +45,17 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Run the CLI on your image
+### 3. Run the CLI on your file
 
 ```bash
-python test_cli.py path/to/your_photo.jpg
+python test_cli.py path/to/your_file
 ```
 
 What it does:
 
-- Reads the image you provide
+- Reads the file you provide
 - Prints the metadata risk report before stripping
-- Writes a clean image with metadata removed
+- Writes a clean artifact with metadata removed
 - Runs the mock DLP interception flow
 - Exports artifacts to the local `outputs/` folder
 
@@ -150,8 +153,11 @@ The sender, recipients, subject, and body are entered in the UI, not in the CLI.
 - `.png`
 - `.tif`
 - `.tiff`
+- `.pdf`
+- `.docx`
 
-JPEG and TIFF are the safest paths for EXIF-heavy demos. HEIC is not enabled by default in this repo.
+JPEG and TIFF remain the safest paths for EXIF-heavy demos. PDF and DOCX use the document
+scanner / cleaner modules. HEIC is not enabled by default in this repo.
 
 ## Output artifacts
 
@@ -165,11 +171,15 @@ You should see files like:
 
 - `clean_email.eml`
 - `clean_1_<name>.jpg`
+- `clean_1_<name>.pdf`
+- `clean_1_<name>.docx`
 - `latest_audit.json`
 
 ## Use it from Python
 
 ```python
+from document_cleaner import strip_document_metadata
+from document_scanner import extract_document_report
 from exif_stripper import extract_metadata_report, strip_metadata
 
 report = extract_metadata_report("your_photo.jpg")
@@ -177,6 +187,12 @@ print(report)
 
 result = strip_metadata("your_photo.jpg", "clean_photo.jpg")
 print(result)
+
+doc_report = extract_document_report("board-pack.docx")
+print(doc_report)
+
+doc_result = strip_document_metadata("board-pack.docx", "clean_board-pack.docx")
+print(doc_result)
 ```
 
 ## SMTP integration
@@ -221,10 +237,12 @@ the sender email address when you send the sanitized attachment.
 - Owner, artist, copyright, and user comments
 - Timestamps and timezone offsets
 - Host computer names
+- PDF author, creator, producer, and document timestamps
+- DOCX author, last modified by, comments, tracked revisions, and custom properties
 
 ## Risk levels
 
-- `CRITICAL`: GPS coordinates or device serial present
-- `HIGH`: 5 or more sensitive tags
-- `MEDIUM`: 2 to 4 sensitive tags
-- `LOW`: 0 or 1 sensitive tag
+- `CRITICAL`: Exact location data, hidden comments, revision history, or embedded objects present
+- `HIGH`: Internal user identities, software fingerprints, or infrastructure details exposed
+- `MEDIUM`: Author plus timeline metadata exposed
+- `LOW`: Minimal or no sensitive metadata detected
