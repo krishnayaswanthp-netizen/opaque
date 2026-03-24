@@ -49,8 +49,9 @@ interface SensitiveFinding {
 
 interface MetadataReport {
   file: string
-  file_type?: "image" | "document"
+  file_type?: "image" | "document" | "media"
   document_type?: string | null
+  media_type?: "video" | "audio" | "media" | null
   file_size_kb: number
   gps: GPSInfo | null
   gps_warning: string | null
@@ -125,7 +126,7 @@ interface BatchMailDetail {
   filename: string
   status: "success" | "failed"
   reason?: string | null
-  file_type?: "image" | "document" | null
+  file_type?: "image" | "document" | "media" | null
   risk_level?: RiskLevel | null
   contains_hidden_data?: boolean | null
   tags_removed?: number | null
@@ -160,7 +161,21 @@ interface ScanLogEntry {
 }
 
 const BACKEND_BASE = "/backend"
-const ACCEPTED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".tif", ".tiff", ".pdf", ".docx"]
+const ACCEPTED_EXTENSIONS = [
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".tif",
+  ".tiff",
+  ".pdf",
+  ".docx",
+  ".mp4",
+  ".mov",
+  ".mkv",
+  ".mp3",
+  ".wav",
+  ".aac",
+]
 
 const riskBadgeClasses: Record<RiskLevel, string> = {
   CRITICAL: "border border-neon-red/40 bg-neon-red/15 text-neon-red",
@@ -389,7 +404,7 @@ function UploadPane({
             </p>
             <p className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
               <FileText className="w-4 h-4" />
-              Supports PNG, JPG, JPEG, TIF, TIFF, PDF, and DOCX
+              Supports PNG, JPG, JPEG, TIF, TIFF, PDF, DOCX, MP4, MOV, MKV, MP3, WAV, and AAC
             </p>
             <p className="text-xs text-muted-foreground/90">
               Select one file for deep inspection, or multiple files for one sanitized batch email.
@@ -830,9 +845,9 @@ function ResultsPane({
             </div>
           ) : null}
 
-          {fileType === "document" && report.contains_hidden_data ? (
+          {fileType !== "image" && report.contains_hidden_data ? (
             <div className="rounded-xl border border-neon-red/30 bg-neon-red/10 p-4 text-sm text-foreground">
-              Hidden document content was detected. Comments, tracked changes, or embedded objects can expose information that is not obvious from the visible file contents alone.
+              Hidden content was detected in the file container. Comments, tracked changes, embedded objects, cover art, or auxiliary streams can expose information that is not obvious from the visible file contents alone.
             </div>
           ) : null}
 
@@ -1814,7 +1829,7 @@ export default function OpaquePage() {
       }
 
       if (report.contains_hidden_data) {
-        appendScanLog("Hidden document content was detected in the uploaded file.", "error")
+        appendScanLog("Hidden content or auxiliary container streams were detected in the uploaded file.", "error")
       }
 
       if (report.sensitive_findings.length) {

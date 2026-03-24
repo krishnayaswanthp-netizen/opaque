@@ -16,11 +16,12 @@ from document_cleaner import strip_document_metadata
 from document_scanner import DOCUMENT_EXTENSIONS, is_document_file
 from dlp_interceptor import IMAGE_EXTENSIONS
 from exif_stripper import strip_metadata
+from services.media_processor import MEDIA_EXTENSIONS, is_media_file, strip_media_metadata
 
 
 logger = logging.getLogger(__name__)
 RISKY_LEVELS = {"HIGH", "CRITICAL"}
-SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
+SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS | MEDIA_EXTENSIONS
 
 
 def process_batch_files(
@@ -127,6 +128,10 @@ def _process_single_upload(
             clean_path = clean_dir / f"clean_{index}_{original_name}"
             result = strip_document_metadata(str(source_path), str(clean_path))
             file_type = "document"
+        elif is_media_file(original_name):
+            clean_path = clean_dir / f"clean_{index}_{original_name}"
+            result = strip_media_metadata(str(source_path), str(clean_path))
+            file_type = result.get("file_type") or "media"
         else:
             raise ValueError("Unsupported file type")
     except Exception as exc:

@@ -1,84 +1,196 @@
 # Meta-Shield
 
-Meta-Shield is a small Python demo that scans file metadata, strips sensitive fields from
-images and documents, and simulates a DLP gateway sanitizing email attachments before they
-leave the network.
+Meta-Shield is a zero-trust metadata defense demo built around a Flask backend and a Next.js
+dashboard. It scans uploaded files for sensitive metadata, strips that metadata where supported,
+and can optionally send sanitized attachments through SMTP.
+
+The current build supports:
+
+- Image metadata analysis and stripping
+- PDF and DOCX metadata analysis and stripping
+- Video and audio metadata analysis and stripping
+- Single-file scan / strip / download workflows
+- Multi-file dashboard workflows with one clean ZIP output
+- Optional in-app email sending after sanitization
 
 ## Project layout
 
 ```text
 metashield/
-|-- exif_stripper.py      # metadata parsing and stripping
-|-- document_scanner.py   # PDF / DOCX metadata scanning
-|-- document_cleaner.py   # PDF / DOCX metadata sanitization
-|-- services/            # batch processing + email helpers
-|-- routes/              # Flask route modules
-|-- dlp_interceptor.py    # mock email interceptor / DLP flow
-|-- app.py                # Flask backend + legacy web UI
-|-- test_cli.py           # CLI demo runner
+|-- app.py                    # Flask backend + legacy Flask UI
+|-- exif_stripper.py          # image metadata scan + strip
+|-- document_scanner.py       # PDF / DOCX metadata scan
+|-- document_cleaner.py       # PDF / DOCX metadata strip
+|-- dlp_interceptor.py        # DLP interception + email assembly
+|-- test_cli.py               # CLI demo runner
+|-- services/
+|   |-- batch_processor.py    # multi-file sanitize + batch prep
+|   `-- email_service.py      # SMTP / message helpers
+|-- routes/
+|   `-- batch_mail.py         # batch mail + batch clean download routes
+|-- outputs/                  # generated clean artifacts and audits
+|-- uploads/                  # uploaded source files
+|-- progress.md               # implementation progress log
 `-- requirements.txt
 
 ../metaUI/
-|-- app/page.tsx          # integrated Next.js frontend
-`-- next.config.mjs       # proxies /backend/* to Flask
+|-- app/page.tsx              # integrated Next.js dashboard
+`-- next.config.mjs           # proxies /backend/* to Flask
 ```
 
-## How to run
+## Supported file types
 
-### 1. Create a virtual environment
+- `.jpg`
+- `.jpeg`
+- `.png`
+- `.tif`
+- `.tiff`
+- `.pdf`
+- `.docx`
+- `.mp4`
+- `.mov`
+- `.mkv`
+- `.mp3`
+- `.wav`
+- `.aac`
 
-Windows PowerShell:
+HEIC is not enabled by default in this repo.
+
+## Media tooling requirement
+
+Video and audio support depends on `ffprobe` and `ffmpeg`.
+
+Meta-Shield uses:
+
+- `ffprobe` to inspect media metadata in JSON form
+- `ffmpeg` with `-map_metadata -1` and stream copy mode to strip metadata without re-encoding
+
+If those binaries are not installed, media scan / strip routes return a clear error instead of
+breaking the rest of the application.
+
+Install FFmpeg from the official distribution for your OS and make sure both `ffmpeg` and
+`ffprobe` are available on your system `PATH` before starting the backend.
+
+## Quick start
+
+### 1. Install Python dependencies
+
+From `metashield/` on Windows PowerShell:
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-macOS / Linux:
+From `metashield/` on Windows Command Prompt:
+
+```cmd
+python -m venv .venv
+.venv\Scripts\activate.bat
+pip install -r requirements.txt
+```
+
+On macOS / Linux:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-### 2. Install dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the CLI on your file
+### 2. Run the backend
 
-```bash
-python test_cli.py path/to/your_file
-```
-
-What it does:
-
-- Reads the file you provide
-- Prints the metadata risk report before stripping
-- Writes a clean artifact with metadata removed
-- Runs the mock DLP interception flow
-- Exports artifacts to the local `outputs/` folder
-
-### 4. Run the Meta-Shield backend
+From `metashield/`:
 
 ```bash
 python app.py
 ```
 
-This starts the Flask backend on:
+Backend URL:
 
 ```text
 http://127.0.0.1:5000
 ```
 
-Optional SMTP settings for in-app email sending:
+### 3. Run the Next.js dashboard
 
-1. Create a local `.env` file in `metashield/`.
-You can copy `.env.example` to `.env`.
+From the sibling `metaUI/` folder:
 
-2. Put only SMTP transport settings in that file:
+```bash
+npm install
+npm run dev
+```
+
+If Windows PowerShell blocks `npm.ps1`, use:
+
+```powershell
+npm.cmd install
+npm.cmd run dev
+```
+
+Dashboard URL:
+
+```text
+http://127.0.0.1:3000
+```
+
+The dashboard proxies `/backend/*` requests to the Flask backend, so `python app.py`
+must be running first.
+
+### 4. Optional CLI demo
+
+From `metashield/`:
+
+```bash
+python test_cli.py path/to/your_file
+```
+
+The CLI:
+
+- scans the file
+- prints the metadata exposure report
+- writes a cleaned output
+- runs the DLP interception flow
+- stores artifacts in `outputs/`
+
+## UI workflows
+
+### Single-file workflow
+
+Use the dashboard or legacy Flask UI to:
+
+- upload one file
+- scan metadata
+- review sensitive findings
+- strip metadata
+- download the cleaned file
+- optionally send the sanitized file by email
+
+### Multi-file workflow
+
+In the Next.js dashboard, you can select multiple files by:
+
+- `Ctrl` + click on Windows for individual files
+- `Shift` + click for a range
+- dragging multiple files into the upload area
+
+For multiple files, the dashboard can:
+
+- prepare one clean ZIP of all supported files
+- download that ZIP even if SMTP is not configured
+- send one sanitized email containing the cleaned outputs
+- process supported images, documents, videos, and audio files in the same batch
+
+## SMTP setup
+
+SMTP is optional. Scan, strip, and download features work without it.
+
+To enable in-app email sending, create:
+
+[.env](C:/Users/teju/OneDrive/Desktop/opaque/metashield/.env)
+
+You can copy `.env.example`, then set:
 
 ```text
 SMTP_HOST=smtp.gmail.com
@@ -89,205 +201,121 @@ SMTP_USE_TLS=true
 SMTP_DEFAULT_SENDER=
 ```
 
-3. Start the backend normally:
+Notes:
 
-```bash
-python app.py
-```
+- `SMTP_PASS` should be an app password when using Gmail
+- `SMTP_DEFAULT_SENDER` is optional
+- if you change `.env`, restart `python app.py`
 
-If `SMTP_HOST` is not set in `.env`, the scan/strip/download flow still works, but the
-"Send Sanitized Email" action in the UI stays disabled.
-
-### 5. Run the integrated `metaUI` frontend
-
-In a second terminal:
-
-Windows PowerShell:
-
-```powershell
-cd ..\metaUI
-npm install
-npm run dev
-```
-
-macOS / Linux:
-
-```bash
-cd ../metaUI
-npm install
-npm run dev
-```
-
-Then open:
+Optional environment variables for media-heavy workflows:
 
 ```text
-http://127.0.0.1:3000
+METASHIELD_MEDIA_MAX_MB=200
+METASHIELD_MAX_REQUEST_MB=512
 ```
 
-The Next.js UI proxies `/backend/*` to the Flask app on `http://127.0.0.1:5000`,
-so the Python backend must be running first.
+- Default built-in values are `200 MB` per media file and `512 MB` per backend request
+- `METASHIELD_MEDIA_MAX_MB` limits each uploaded media file
+- `METASHIELD_MAX_REQUEST_MB` limits the total Flask request size, which matters for multi-file batches
 
-If your Flask backend runs on a different URL, set:
+## Backend endpoints
 
-```text
-METASHIELD_BACKEND_URL=http://your-host:your-port
-```
+### Core routes
 
-before starting the Next.js app.
+- `POST /upload`
+- `POST /scan`
+- `POST /strip`
+- `GET /download_clean`
+- `GET /download_original`
+- `POST /send_email`
 
-### 6. Legacy Flask UI
+### Batch routes
 
-The original Flask page still works at:
+- `POST /send-mail-batch`
+- `POST /send_mail_batch`
+- `POST /strip-batch`
+- `POST /strip_batch`
+- `GET /download_batch_clean?artifact=<name>`
 
-```text
-http://127.0.0.1:5000
-```
+## What Meta-Shield detects
 
-Both UIs only analyze files you explicitly upload from your machine.
-When SMTP is configured on the backend, the integrated `metaUI` flow can also
-send a sanitized attachment directly from the application after stripping.
-The sender, recipients, subject, and body are entered in the UI, not in the CLI.
+### Images
 
-## Supported input formats
+- GPS coordinates and altitude
+- camera make / model / software fingerprints
+- serial numbers and owner-style fields
+- timestamps and timezone offsets
+- host computer names
+- embedded thumbnail leakage
+- invalid or placeholder GPS blocks
 
-- `.jpg`
-- `.jpeg`
-- `.png`
-- `.tif`
-- `.tiff`
-- `.pdf`
-- `.docx`
+### Documents
 
-JPEG and TIFF remain the safest paths for EXIF-heavy demos. PDF and DOCX use the document
-scanner / cleaner modules. HEIC is not enabled by default in this repo.
+- PDF author, creator, producer, and document timestamps
+- DOCX author and last modified by
+- comments, revision history, and custom properties
+- hidden or embedded-content indicators where detectable
+
+### Video and audio
+
+- location tags and QuickTime GPS-style metadata where present
+- encoder and software fingerprints
+- device make and model metadata
+- creation timestamps
+- artist, owner, publisher, and descriptive fields
+- embedded cover art or auxiliary attachment streams
+
+## Risk model
+
+- `CRITICAL`: exact location data, hidden comments, tracked revisions, embedded objects
+- `HIGH`: internal user identities, device fingerprints, software / infrastructure exposure
+- `MEDIUM`: author plus timeline metadata
+- `LOW`: minimal or no meaningful sensitive metadata
 
 ## Output artifacts
 
-Running the interceptor writes reusable artifacts to:
+Generated artifacts are written to:
 
 ```text
 outputs/
 ```
 
-You should see files like:
+Common outputs include:
 
 - `clean_email.eml`
-- `clean_1_<name>.jpg`
-- `clean_1_<name>.pdf`
-- `clean_1_<name>.docx`
+- `clean_<name>.jpg`
+- `clean_<name>.pdf`
+- `clean_<name>.docx`
+- `clean_<name>.mp4`
+- `clean_<name>.mov`
+- `clean_<name>.mkv`
+- `clean_<name>.mp3`
+- `clean_<name>.wav`
+- `clean_<name>.aac`
+- `clean_batch_<id>.zip`
 - `latest_audit.json`
 
-## Use it from Python
+## Python usage
 
 ```python
 from document_cleaner import strip_document_metadata
 from document_scanner import extract_document_report
 from exif_stripper import extract_metadata_report, strip_metadata
 
-report = extract_metadata_report("your_photo.jpg")
-print(report)
+image_report = extract_metadata_report("photo.jpg")
+image_result = strip_metadata("photo.jpg", "clean_photo.jpg")
 
-result = strip_metadata("your_photo.jpg", "clean_photo.jpg")
-print(result)
-
-doc_report = extract_document_report("board-pack.docx")
-print(doc_report)
-
-doc_result = strip_document_metadata("board-pack.docx", "clean_board-pack.docx")
-print(doc_result)
+doc_report = extract_document_report("report.docx")
+doc_result = strip_document_metadata("report.docx", "clean_report.docx")
 ```
 
-## SMTP integration
+## Notes
 
-```python
-from dlp_interceptor import DLPInterceptor
+- The legacy Flask UI is still available at `http://127.0.0.1:5000`
+- The newer dashboard lives in the sibling `metaUI/` app
+- The project now uses only user-supplied files for analysis
+- Batch clean download works even when SMTP is not configured
+- Media files larger than the configured limit are rejected to protect backend memory and temp storage
 
-dlp = DLPInterceptor(
-    smtp_host="smtp.gmail.com",
-    smtp_port=587,
-    smtp_user="you@gmail.com",
-    smtp_pass="your_app_password",
-)
-
-audit = dlp.intercept(
-    sender="employee@corp.com",
-    recipients=["client@external.com"],
-    subject="Whiteboard photos",
-    body="See attached.",
-    attachments=["photo.jpg"],
-    send_email=True,
-)
-```
-
-The web app uses the same interceptor internally. The SMTP-related backend
-environment variables are:
-
-- `SMTP_HOST`
-- `SMTP_PORT` (defaults to `587`)
-- `SMTP_USER`
-- `SMTP_PASS`
-- `SMTP_USE_TLS` (`true` by default)
-- `SMTP_DEFAULT_SENDER` or `SMTP_FROM`
-
-`SMTP_DEFAULT_SENDER` is optional. If you leave it blank, the UI will ask for
-the sender email address when you send the sanitized attachment.
-
-## Batch mail endpoint
-
-Meta-Shield also exposes a batch mail route for dashboard-style workflows:
-
-```text
-POST /send-mail-batch
-```
-
-It accepts multipart form data with:
-
-- `files`: multiple uploaded files
-- `recipient` or `recipients`: recipient email address
-- `sender`: optional sender email
-- `subject`: optional subject
-- `body`: optional email body
-- `zip_output`: optional boolean (`true` by default) to send one ZIP instead of many attachments
-
-Example:
-
-```bash
-curl -X POST http://127.0.0.1:5000/send-mail-batch \
-  -F "recipient=client@example.com" \
-  -F "sender=analyst@example.com" \
-  -F "subject=Sanitized batch" \
-  -F "zip_output=true" \
-  -F "files=@photo.jpg" \
-  -F "files=@report.pdf" \
-  -F "files=@draft.docx"
-```
-
-The backend processes every file, continues past per-file failures, sends exactly one email,
-and returns a JSON summary with processed and failed counts plus per-file details.
-
-For download-only workflows, Meta-Shield also exposes:
-
-```text
-POST /strip-batch
-GET /download_batch_clean?artifact=<name>
-```
-
-The dashboard uses this path to prepare one clean ZIP of the selected files even when SMTP
-is not configured.
-
-## What gets stripped
-
-- GPS coordinates and altitude
-- Camera make, model, serial number, and software
-- Owner, artist, copyright, and user comments
-- Timestamps and timezone offsets
-- Host computer names
-- PDF author, creator, producer, and document timestamps
-- DOCX author, last modified by, comments, tracked revisions, and custom properties
-
-## Risk levels
-
-- `CRITICAL`: Exact location data, hidden comments, revision history, or embedded objects present
-- `HIGH`: Internal user identities, software fingerprints, or infrastructure details exposed
-- `MEDIUM`: Author plus timeline metadata exposed
-- `LOW`: Minimal or no sensitive metadata detected
+For a milestone-by-milestone record of what was implemented and why, see
+[progress.md](C:/Users/teju/OneDrive/Desktop/opaque/metashield/progress.md).

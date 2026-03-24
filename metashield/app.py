@@ -15,10 +15,15 @@ from document_scanner import extract_document_report, is_document_file
 from dlp_interceptor import DLPInterceptor
 from exif_stripper import extract_metadata_report
 from routes.batch_mail import create_batch_mail_blueprint
+from services.media_processor import (
+    MEDIA_EXTENSIONS,
+    ensure_media_size_within_limit,
+    extract_media_metadata,
+    is_media_file,
+)
 
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
 HTML = """
 <!DOCTYPE html>
@@ -198,7 +203,7 @@ HTML = """
       <div style="font-size:2rem">[+]</div>
       <strong>Click to upload a file</strong>
       <p>Meta-Shield only analyzes metadata from files you provide</p>
-      <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.tif,.tiff,.pdf,.docx" onchange="handleFile(this)">
+      <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.tif,.tiff,.pdf,.docx,.mp4,.mov,.mkv,.mp3,.wav,.aac" onchange="handleFile(this)">
     </div>
     <p id="status">No file selected.</p>
   </div>
@@ -456,7 +461,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 CLEAN_PATH = None
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 DOCUMENT_EXTENSIONS = {".pdf", ".docx"}
-ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
+ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS | MEDIA_EXTENSIONS
 app.register_blueprint(create_batch_mail_blueprint(BASE_DIR))
 
 
@@ -484,6 +489,17 @@ def _load_local_env_file(env_path: Path) -> None:
 _load_local_env_file(BASE_DIR / ".env")
 
 
+def _env_int(name: str, default: int) -> int:
+    raw_value = (os.getenv(name) or str(default)).strip()
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
+app.config["MAX_CONTENT_LENGTH"] = max(_env_int("METASHIELD_MAX_REQUEST_MB", 512), 16) * 1024 * 1024
+
+
 def _is_allowed_file(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
@@ -491,6 +507,8 @@ def _is_allowed_file(filename: str) -> bool:
 def _scan_uploaded_file(file_path: str) -> dict:
     if is_document_file(file_path):
         return extract_document_report(file_path)
+    if is_media_file(file_path):
+        return extract_media_metadata(file_path)
 
     report = extract_metadata_report(file_path)
     report.setdefault("file_type", "image")
@@ -594,6 +612,14 @@ def upload():
     unique_name = f"{Path(safe_name).stem}_{uuid4().hex[:8]}{Path(safe_name).suffix.lower()}"
     destination = UPLOAD_DIR / unique_name
     incoming_file.save(destination)
+
+    if is_media_file(destination.name):
+        try:
+            ensure_media_size_within_limit(destination)
+        except ValueError as exc:
+            destination.unlink(missing_ok=True)
+            return jsonify({"error": str(exc)}), 400
+
     return jsonify({"filename": unique_name, "path": str(destination)})
 
 

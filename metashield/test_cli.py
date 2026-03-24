@@ -13,6 +13,7 @@ from document_cleaner import strip_document_metadata
 from document_scanner import extract_document_report, is_document_file
 from dlp_interceptor import DLPInterceptor
 from exif_stripper import extract_metadata_report, strip_metadata
+from services.media_processor import extract_media_metadata, is_media_file, strip_media_metadata
 
 
 def print_section(title):
@@ -103,6 +104,9 @@ def main():
     if is_document_file(source_path.name):
         scan_file = extract_document_report
         clean_metadata = strip_document_metadata
+    elif is_media_file(source_path.name):
+        scan_file = extract_media_metadata
+        clean_metadata = strip_media_metadata
     else:
         scan_file = extract_metadata_report
         clean_metadata = strip_metadata
@@ -156,6 +160,7 @@ def main():
     print(f"  Recipients      : {', '.join(audit['recipients'])}")
     print(f"  Images processed: {audit['images_processed']}")
     print(f"  Docs processed  : {audit.get('documents_processed', 0)}")
+    print(f"  Media processed : {audit.get('media_processed', 0)}")
     print(f"  Tags removed    : {audit['total_tags_removed']}")
     print(
         f"  Clean file      : "

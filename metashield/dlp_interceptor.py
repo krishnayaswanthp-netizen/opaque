@@ -17,6 +17,7 @@ from pathlib import Path
 from document_cleaner import strip_document_metadata
 from document_scanner import DOCUMENT_EXTENSIONS
 from exif_stripper import strip_metadata
+from services.media_processor import MEDIA_EXTENSIONS, strip_media_metadata
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
@@ -73,6 +74,7 @@ class DLPInterceptor:
             "total_attachments": len(attachments),
             "images_processed": 0,
             "documents_processed": 0,
+            "media_processed": 0,
             "non_image_attachments": 0,
             "total_tags_removed": 0,
             "attachment_reports": [],
@@ -114,6 +116,17 @@ class DLPInterceptor:
                 result["artifact_output_file"] = str(artifact_clean_path)
 
                 audit["documents_processed"] += 1
+                audit["total_tags_removed"] += result["tags_removed"]
+                audit["attachment_reports"].append(result)
+                clean_attachments.append(artifact_clean_path)
+            elif extension in MEDIA_EXTENSIONS:
+                clean_name = f"clean_{index}_{attachment_path.stem}{extension}"
+                artifact_clean_path = self.artifact_dir / clean_name
+
+                result = strip_media_metadata(str(attachment_path), str(artifact_clean_path))
+                result["artifact_output_file"] = str(artifact_clean_path)
+
+                audit["media_processed"] += 1
                 audit["total_tags_removed"] += result["tags_removed"]
                 audit["attachment_reports"].append(result)
                 clean_attachments.append(artifact_clean_path)
