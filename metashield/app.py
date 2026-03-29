@@ -802,4 +802,8 @@ if __name__ == "__main__":
     print("\nMeta-Shield DLP Demo")
     print("=" * 40)
     print("Open http://127.0.0.1:5000 in your browser\n")
-    app.run(debug=True, port=5000)
+    app.run(
+        debug=_env_flag("METASHIELD_DEBUG", default=True),
+        use_reloader=_env_flag("METASHIELD_USE_RELOADER", default=False),
+        port=5000,
+    )

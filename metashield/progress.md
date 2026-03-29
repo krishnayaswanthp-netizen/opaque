@@ -1,257 +1,518 @@
-# Meta-Shield Progress
+# Meta-Shield Progress And Decision Log
 
-This file records the major implementation milestones completed for Meta-Shield, why each
-step was taken, and what it enabled in the project.
+This file explains how Meta-Shield evolved, why major changes were made, and what each change enabled. It is intended to help a new engineer or AI understand the project trajectory without reconstructing decisions from commit history.
 
-## 1. Project analysis and run-path cleanup
+## 1. Current State Summary
 
-What we did:
+Meta-Shield started as a metadata-stripping demo centered on image EXIF. It is now a broader zero-trust DLP workflow with:
 
-- reviewed the existing Flask demo structure
-- identified the backend entry points, scan flow, strip flow, and CLI flow
-- updated the setup guidance so the project can be started reliably
+- Flask backend routing and artifact management
+- Next.js dashboard in sibling `../metaUI`
+- image, document, and media metadata analysis
+- detailed risk explanations
+- single-file strip and email send
+- multi-file clean ZIP generation
+- one-email batch delivery
 
-Why we did it:
+The design principle throughout the project has been:
 
-- the project needed a clear run path before deeper changes could be made safely
-- stable setup instructions reduce integration mistakes and repeated debugging
+Reuse one pipeline shape across file types instead of building separate one-off products for images, documents, and media.
 
-Result:
+## 2. Why This Log Exists
 
-- the project can be started with `python app.py`
-- the repo now has a clearer execution story for backend, CLI, and UI
+The codebase changed in layers:
 
-## 2. Hardened EXIF parsing for malformed GPS data
+- reliability fixes
+- correctness fixes
+- explainability improvements
+- new file-type support
+- DLP workflow expansion
+- UI/backend integration
+- frontend refactor
+- operational hardening
 
-What we did:
+Without this file, a new AI might understand what the project can do but miss why modules were added or why certain defaults were chosen.
 
-- fixed GPS parsing paths that could fail on malformed EXIF rationals
-- prevented divide-by-zero failures during metadata scans
+## 3. Decision Timeline
 
-Why we did it:
+### Phase 1: Stabilize The Original Demo
 
-- user-supplied images can contain broken or partially written EXIF blocks
-- the scanner should degrade gracefully instead of crashing on hostile or malformed inputs
+#### 3.1 Project analysis and run-path cleanup
 
-Result:
+What changed:
 
-- invalid GPS values now return safe output instead of crashing `/scan`
-- Meta-Shield became more reliable on real device images
+- mapped the original backend flow
+- identified `app.py`, `exif_stripper.py`, `dlp_interceptor.py`, and `test_cli.py` as the core execution path
+- rewrote setup guidance so the system could be run predictably
 
-## 3. Clarified invalid GPS blocks instead of overstating location leakage
+Why this happened:
 
-What we did:
+- safe extension work needs a reliable baseline
+- undocumented startup paths make every later change riskier
 
-- detected placeholder or invalid GPS blocks separately
-- surfaced a warning when a GPS container exists but coordinates are unusable
+What it enabled:
 
-Why we did it:
+- consistent backend startup with `python app.py`
+- cleaner onboarding for future contributors
 
-- a security tool should distinguish between real exposure and empty placeholders
-- users need accurate interpretation, not alarm without evidence
+#### 3.2 Hardened EXIF parsing against malformed GPS data
 
-Result:
+What changed:
 
-- the UI can explain when GPS metadata exists but no real location can be recovered
+- fixed divide-by-zero and malformed-rational issues in EXIF GPS parsing
 
-## 4. Removed fake/static demo input generation
+Why this happened:
 
-What we did:
+- real user files contain partial, malformed, or hostile metadata blocks
+- a security tool should never crash on suspicious input
 
-- removed the default fake-image generation path from the active flows
-- made the project operate only on user-provided files
+What it enabled:
 
-Why we did it:
+- robust `/scan` behavior on real phone photos
+- graceful handling of invalid GPS fields
 
-- static demo data created confusion during real testing
-- the tool should reflect real user uploads rather than hidden seeded content
+#### 3.3 Distinguished invalid GPS placeholders from real location leaks
 
-Result:
+What changed:
 
-- all active scan and strip workflows now use only actual uploaded files
+- added logic to identify GPS containers with empty or unusable coordinates
+- surfaced a dedicated warning instead of treating every GPS block as a true leak
 
-## 5. Improved exposure reporting with detailed findings
+Why this happened:
 
-What we did:
+- precision matters in a security product
+- overstating exposure undermines trust
 
-- added a detailed findings view in the exposed-metadata section
-- included the detected field, its meaning, attacker use case, and why it is risky
+What it enabled:
 
-Why we did it:
+- accurate user messaging for “GPS block present but location unrecoverable” cases
 
-- high-level risk pills were useful, but not enough for demonstration or education
-- security users need explainability, not just a verdict
+### Phase 2: Remove Demo Artifacts And Improve Explainability
 
-Result:
+#### 3.4 Removed fake/static test input from active flows
 
-- the UI now gives a clearer security narrative for every sensitive tag found
+What changed:
 
-## 6. Added thumbnail leakage visibility and stripping
+- removed built-in fake input generation from the main user path
+- shifted the system to operate only on user-provided files
 
-What we did:
+Why this happened:
 
-- verified embedded EXIF thumbnails were being removed during cleaning
-- exposed thumbnail leakage in reporting so users can see it before and after stripping
+- seeded demo files confused real testing
+- hidden defaults are the opposite of zero-trust behavior
 
-Why we did it:
+What it enabled:
 
-- residual thumbnails are a real metadata-adjacent leak vector
-- the project needed to show that cleanup covered more than basic tags
+- deterministic testing using only actual uploads
+- fewer surprises in demos
 
-Result:
+#### 3.5 Added detailed exposure reporting
 
-- Meta-Shield now explicitly reports and demonstrates thumbnail removal
+What changed:
 
-## 7. Integrated the Next.js dashboard with the Flask backend
+- extended reporting beyond risk pills
+- added per-tag explanations with:
+  - what the field is
+  - how an attacker could use it
+  - why it is dangerous to the user
 
-What we did:
+Why this happened:
 
-- connected `metaUI` to the real Flask routes
-- preserved the legacy Flask UI as a fallback
-- aligned upload, scan, strip, and download behavior across the backend and dashboard
+- metadata tools need explainability, not just “red/yellow/green”
+- the project is used as both a DLP demo and an educational aid
 
-Why we did it:
+What it enabled:
 
-- the newer UI needed to become functional instead of static
-- backend integration had to be done without breaking the original demo
+- detailed findings view in the dashboard
+- more defensible risk explanations
 
-Result:
+#### 3.6 Made thumbnail leakage visible
 
-- the Next.js dashboard now drives live backend operations
-- Flask remains available as a backup UI path
+What changed:
 
-## 8. Added SMTP-backed send-from-dashboard flow
+- verified that embedded image thumbnails were being stripped
+- surfaced thumbnail leakage in the scan and strip reports
 
-What we did:
+Why this happened:
 
-- introduced backend SMTP configuration through `.env`
-- added a UI-driven send flow where sender, recipients, subject, and body are entered in the app
+- thumbnails are a common hidden-data leak
+- users need to see that cleanup covers more than obvious EXIF tags
 
-Why we did it:
+What it enabled:
 
-- the project needed a more realistic DLP demo outcome than local artifact generation alone
-- email composition belongs in the UI, not in command-line setup
+- before/after proof that embedded preview thumbnails are removed
 
-Result:
+### Phase 3: Make The Modern UI Real
 
-- sanitized files can now be emailed directly from the application when SMTP is configured
+#### 3.7 Integrated the Next.js dashboard with the real Flask backend
 
-## 9. Added PDF and DOCX metadata analysis
+What changed:
 
-What we did:
+- connected `../metaUI` to live Flask endpoints
+- preserved the legacy Flask UI instead of replacing it
 
-- created `document_scanner.py`
-- created `document_cleaner.py`
-- routed supported document types through dedicated scan and strip logic
+Why this happened:
 
-Why we did it:
+- the new UI existed visually but needed real backend behavior
+- keeping the legacy UI reduced migration risk
 
-- real DLP workflows are not limited to photos
-- document metadata often leaks internal users, comments, revisions, and software trails
+What it enabled:
 
-Result:
+- live upload, scan, strip, and download from the modern dashboard
 
-- Meta-Shield now supports PDF and DOCX alongside images
+#### 3.8 Added SMTP-backed send-from-dashboard flow
 
-## 10. Extended the DLP pipeline to sanitize documents too
+What changed:
 
-What we did:
+- moved email composition inputs into the UI
+- loaded SMTP transport settings from backend environment variables
 
-- updated the DLP interception flow so cleaned document outputs can move through the same path
-- kept the existing image behavior intact
+Why this happened:
 
-Why we did it:
+- users should not have to enter message details in the terminal
+- email sending is part of the DLP demo outcome, not a separate admin-only concern
 
-- document support needed to be first-class, not isolated from the interception flow
-- reuse of the existing DLP path kept the design modular and consistent
+What it enabled:
 
-Result:
+- in-app sending of sanitized files
+- clearer separation between transport secrets and user message content
 
-- images and supported documents now share a common sanitize-and-forward path
+### Phase 4: Expand Beyond Images
 
-## 11. Added batch mail backend processing
+#### 3.9 Added PDF and DOCX metadata analysis
 
-What we did:
+What changed:
+
+- introduced `document_scanner.py`
+- introduced `document_cleaner.py`
+- extended the routing layer to detect document types
+
+Why this happened:
+
+- real DLP problems involve documents as often as images
+- PDF and DOCX carry author, reviewer, comment, revision, and producer metadata
+
+What it enabled:
+
+- scan and sanitize support for `.pdf` and `.docx`
+
+#### 3.10 Extended the DLP path to sanitize documents too
+
+What changed:
+
+- reused the existing DLP interception pattern for document files
+
+Why this happened:
+
+- document support needed to plug into the existing email and audit path
+- separate document-only forwarding logic would have duplicated behavior
+
+What it enabled:
+
+- documents moving through the same sanitize-and-forward pipeline as images
+
+### Phase 5: Add Batch Processing
+
+#### 3.11 Added backend batch processing and batch email delivery
+
+What changed:
 
 - created `services/batch_processor.py`
 - created `services/email_service.py`
 - created `routes/batch_mail.py`
-- added one-email batch send support for multiple sanitized files
+- added one-email batch delivery
 
-Why we did it:
+Why this happened:
 
-- dashboard workflows often involve multiple attachments, not just one file
-- the user needed one outbound email containing all processed outputs, not one message per file
+- users often need to sanitize many attachments at once
+- the requirement was one outbound email, not one email per cleaned file
 
-Result:
+What it enabled:
 
-- the backend can process many files, continue past per-file failures, and send one final email
+- one-email batch processing with per-file success/failure reporting
 
-## 12. Added multi-file dashboard selection
+#### 3.12 Added multi-file selection in the dashboard
 
-What we did:
+What changed:
 
-- enabled multi-file selection in the Next.js UI
-- preserved the existing single-file deep-analysis flow
-- routed multiple files into the new batch workflow
+- enabled multi-file upload in the Next.js UI
+- preserved the deeper single-file path for detailed inspection
 
-Why we did it:
+Why this happened:
 
-- the backend batch capability needed a matching dashboard interaction model
-- single-file and multi-file experiences serve different use cases and both needed to remain intact
+- batch backend features needed a matching UI affordance
+- single-file and multi-file workflows solve different problems
 
-Result:
+What it enabled:
 
-- users can now drag in or select multiple files from the UI
+- drag-and-drop or multi-select batch workflows from the dashboard
 
-## 13. Added batch clean ZIP preparation and download
+#### 3.13 Added clean ZIP preparation and download for batch flows
 
-What we did:
+What changed:
 
-- added batch strip preparation endpoints
-- added download support for a clean ZIP artifact
-- exposed `Prepare Clean ZIP` and `Download Clean ZIP` in the dashboard
+- exposed a batch strip route that prepares one clean ZIP
+- added batch clean download endpoints and UI controls
 
-Why we did it:
+Why this happened:
 
-- batch users needed value even when SMTP is not configured
-- download-first workflows are important for local review and proof of sanitization
+- batch workflows should remain useful even if SMTP is not configured
+- download-first verification is important for demos and audits
 
-Result:
+What it enabled:
 
-- users can sanitize multiple files and download one cleaned ZIP directly from the UI
+- multi-file sanitize + local download without email dependency
 
-## 14. Improved documentation and operational clarity
+### Phase 6: Improve Operational Clarity
 
-What we did:
+#### 3.14 Rewrote documentation to match the real system
 
-- updated the README to reflect the current architecture and flows
-- added this progress log so implementation choices are traceable
+What changed:
 
-Why we did it:
+- expanded `README.md`
+- added and maintained `progress.md`
 
-- the project evolved from a simple EXIF demo into a broader DLP workflow
-- documentation needed to match the real feature set and explain why changes were made
+Why this happened:
 
-Result:
+- the repo outgrew its original EXIF-demo documentation
+- future work was becoming harder because the system shape was no longer obvious
 
-- the repo now has a clearer reference for both current usage and completed milestones
+What it enabled:
 
-## 15. Added video and audio metadata support
+- faster onboarding
+- lower context cost for future contributors and AIs
 
-What we did:
+### Phase 7: Add Media Support
 
-- created `services/media_processor.py`
-- added ffprobe-based metadata extraction for supported media files
-- added ffmpeg-based metadata stripping without re-encoding
-- integrated media into single-file, batch, CLI, and email flows
+#### 3.15 Added video and audio metadata support
 
-Why we did it:
+What changed:
 
-- sensitive metadata is not limited to photos and office documents
-- video and audio files can leak location, device fingerprints, timestamps, creator identities, and hidden attachment streams
-- the existing pipeline needed to grow without splitting into a separate media-only path
+- introduced `services/media_processor.py`
+- added `ffprobe` extraction and `ffmpeg` strip logic
+- integrated media into scan, strip, batch, CLI, and email flows
 
-Result:
+Why this happened:
 
-- Meta-Shield now supports MP4, MOV, MKV, MP3, WAV, and AAC in the same scan, sanitize, batch, and email workflows
+- videos and audio files also leak location, timestamps, encoder/toolchain details, identities, and hidden streams
+- media support needed to reuse the existing pipeline shape rather than become a separate subsystem
+
+What it enabled:
+
+- support for:
+  - `.mp4`
+  - `.mov`
+  - `.mkv`
+  - `.mp3`
+  - `.wav`
+  - `.aac`
+
+#### 3.16 Added clear handling when FFmpeg tooling is missing
+
+What changed:
+
+- media routes return explicit errors if `ffmpeg` or `ffprobe` are not installed
+
+Why this happened:
+
+- missing native tooling is a deployment issue, not a reason to crash the app
+
+What it enabled:
+
+- graceful degradation for media features
+- easier setup debugging
+
+#### 3.17 Fixed FFmpeg self-stamping residual metadata
+
+What changed:
+
+- updated the media strip path to prevent FFmpeg from adding a fresh `encoder=Lavf...` tag to cleaned outputs
+
+Why this happened:
+
+- a cleaned media file was still showing `Lavf...` as sensitive metadata
+- that was not user-originated metadata; it was newly introduced by the sanitizer itself
+
+What it enabled:
+
+- cleaned media can be rescanned without showing false-positive encoder leakage from the cleaning process
+
+### Phase 8: Make Large Media Work Reliably
+
+#### 3.18 Added size guards for media processing
+
+What changed:
+
+- enforced per-media-file size limits in `services/media_processor.py`
+
+Why this happened:
+
+- large media files can overwhelm local dev environments and temp storage
+- the project needed predictable behavior under batch and upload pressure
+
+What it enabled:
+
+- deliberate rejection of oversized media with clear messaging instead of unstable behavior
+
+#### 3.19 Raised default size limits for real-world testing
+
+What changed:
+
+- set the built-in media default to `200 MB`
+- set the built-in backend request cap to `512 MB`
+- set the frontend proxy body-size default to `512mb`
+
+Why this happened:
+
+- the initial conservative defaults blocked common demo files
+- the project needed practical out-of-the-box behavior without requiring env-var tuning for ordinary usage
+
+What it enabled:
+
+- smoother upload handling for realistic video and audio samples
+
+### Phase 9: Reduce Dev-Time Instability
+
+#### 3.20 Disabled Flask auto-reloader by default
+
+What changed:
+
+- kept debug mode on by default
+- turned `use_reloader` off by default unless explicitly enabled
+
+Why this happened:
+
+- writing clean files and audit artifacts during requests could trigger a Flask dev restart
+- the Next.js proxy then surfaced this as `ECONNRESET` or `socket hang up`, even when backend work had actually completed
+
+What it enabled:
+
+- more stable `/send_email` and artifact-writing behavior during development
+
+### Phase 10: Refactor The Dashboard Into Reusable Components
+
+#### 3.21 Replaced monolithic page logic with composed frontend modules
+
+What changed:
+
+- reduced `../metaUI/app/page.tsx` to orchestration
+- moved presentation and workflow sections into:
+  - `components/opaque/header.tsx`
+  - `components/opaque/upload-box.tsx`
+  - `components/opaque/scan-logs.tsx`
+  - `components/opaque/results-panel.tsx`
+  - `components/opaque/action-panel.tsx`
+  - `components/opaque/batch-panel.tsx`
+  - `components/opaque/dashboard-primitives.tsx`
+- centralized contracts in `../metaUI/lib/metashield-types.ts`
+- centralized backend calls in `../metaUI/lib/metashield-client.ts`
+
+Why this happened:
+
+- the dashboard had become too large to maintain safely as one file
+- multiple workflows were sharing presentation patterns but not code
+- a reusable component model lowers the risk of future UI changes
+
+What it enabled:
+
+- clearer frontend boundaries
+- simpler future edits
+- a more maintainable dashboard architecture
+
+#### 3.22 Added visual balance and motion improvements
+
+What changed:
+
+- improved dashboard composition and reusable primitives
+- added subtle animation in `../metaUI/app/globals.css`
+
+Why this happened:
+
+- the product needed to feel intentional rather than stitched together
+- small motion cues help guide users through upload, scan, and action states
+
+What it enabled:
+
+- a more polished dashboard without changing backend behavior
+
+## 4. Architectural Throughline
+
+The major consistent decisions across all phases were:
+
+### Keep one pipeline shape
+
+Instead of creating a separate mini-app for each file class, the project standardized on:
+
+- upload
+- scan
+- explain
+- sanitize
+- download or send
+
+That decision is why image, document, and media support can all coexist without fragmenting the app.
+
+### Normalize outputs
+
+Each scanner returns a report that fits the same broad structure:
+
+- what file it is
+- what metadata was found
+- what is sensitive
+- why it matters
+- how risky it is
+- whether hidden data exists
+
+That consistency keeps the UI and batch layers reusable.
+
+### Preserve backward compatibility
+
+Existing flows were extended instead of replaced:
+
+- legacy Flask UI was kept
+- single-file endpoints were kept
+- new features were added as new modules or new routes
+
+This reduces breakage and keeps demos operational while new capability is added.
+
+### Favor explicit safety over silent magic
+
+Examples:
+
+- oversized media is rejected with a clear message
+- missing `ffmpeg` / `ffprobe` produces a clear error
+- invalid GPS blocks are described accurately instead of exaggerated
+- SMTP configuration stays on the backend
+
+## 5. What To Read Next
+
+If you are continuing work:
+
+1. Read `README.md` for the current architecture
+2. Read `app.py` to see route entry points
+3. Read the file-type module relevant to your task:
+   - images: `exif_stripper.py`
+   - documents: `document_scanner.py`, `document_cleaner.py`
+   - media: `services/media_processor.py`
+4. Read the DLP flow layer:
+   - `dlp_interceptor.py`
+   - `services/email_service.py`
+   - `services/batch_processor.py`
+   - `routes/batch_mail.py`
+5. If the task is frontend-facing, move to the sibling `../metaUI` project and inspect:
+   - `app/page.tsx`
+   - `lib/metashield-client.ts`
+   - `lib/metashield-types.ts`
+   - `components/opaque/*`
+
+## 6. Bottom Line
+
+Meta-Shield is no longer just an EXIF demo. It is now a modular metadata-aware DLP workflow that:
+
+- analyzes images, documents, and media
+- explains exposure clearly
+- sanitizes files
+- supports single-file and batch workflows
+- packages or sends sanitized outputs
+- keeps the backend logic centralized and extensible
+
+That is the lens future work should preserve.

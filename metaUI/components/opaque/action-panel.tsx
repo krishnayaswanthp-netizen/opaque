@@ -1,127 +1,275 @@
 "use client"
 
-import { useState } from "react"
-import { ShieldCheck, Download, Loader2, CheckCircle2, Sparkles } from "lucide-react"
+import type { ReactNode } from "react"
+import {
+  Download,
+  Loader2,
+  Mail,
+  RotateCcw,
+  SendHorizontal,
+  ShieldCheck,
+} from "lucide-react"
+
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Callout, DashboardPanel, MetricCard, SectionHeading } from "@/components/opaque/dashboard-primitives"
+import type { EmailFormState, MetadataReport, SendEmailResponse, StripResponse } from "@/lib/metashield-types"
 
-export function ActionPanel() {
-  const [cleaningState, setCleaningState] = useState<"idle" | "cleaning" | "success">("idle")
+function EmailField({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  )
+}
 
-  const handleClean = () => {
-    setCleaningState("cleaning")
-    setTimeout(() => {
-      setCleaningState("success")
-    }, 2000)
-  }
-
-  const handleDownload = () => {
-    // Simulated download
-  }
-
-  const handleReset = () => {
-    setCleaningState("idle")
-  }
-
-  if (cleaningState === "success") {
-    return (
-      <div className="glass-panel rounded-xl p-8 neon-glow-green border-neon-green/30">
-        <div className="flex flex-col items-center gap-6 text-center">
-          <div className="relative">
-            <div className="p-4 rounded-full bg-neon-green/20">
-              <CheckCircle2 className="w-12 h-12 text-neon-green" />
-            </div>
-            <div className="absolute inset-0 blur-xl bg-neon-green/30 rounded-full animate-pulse" />
-          </div>
-          
-          <div>
-            <h3 className="text-2xl font-bold text-neon-green neon-text-green">
-              File Secured
-            </h3>
-            <p className="text-muted-foreground mt-2">
-              All sensitive metadata has been successfully removed
-            </p>
-          </div>
-
-          <div className="flex items-center gap-4 pt-4">
-            <Button 
-              onClick={handleDownload}
-              className="bg-neon-green hover:bg-neon-green/90 text-background font-semibold px-6 py-6 rounded-xl transition-all duration-300 hover:scale-105"
-            >
-              <Download className="w-5 h-5 mr-2" />
-              Download Clean File
-            </Button>
-            <Button 
-              onClick={handleReset}
-              variant="outline"
-              className="border-border hover:border-neon-blue hover:text-neon-blue px-6 py-6 rounded-xl transition-all duration-300"
-            >
-              <Sparkles className="w-5 h-5 mr-2" />
-              Scan Another
-            </Button>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <ShieldCheck className="w-4 h-4 text-neon-green" />
-            <span>Protected by Opaque Zero Trust Scanner</span>
-          </div>
-        </div>
-      </div>
-    )
-  }
+export function ActionPanel({
+  report,
+  stripResult,
+  isCleaning,
+  error,
+  emailForm,
+  isSendingEmail,
+  emailError,
+  emailResult,
+  onEmailFieldChange,
+  onSendEmail,
+  onClean,
+  onDownloadOriginal,
+  onDownloadClean,
+  onReset,
+}: {
+  report: MetadataReport
+  stripResult: StripResponse | null
+  isCleaning: boolean
+  error?: string | null
+  emailForm: EmailFormState
+  isSendingEmail: boolean
+  emailError?: string | null
+  emailResult: SendEmailResponse | null
+  onEmailFieldChange: (field: keyof EmailFormState, value: string) => void
+  onSendEmail: () => void | Promise<void>
+  onClean: () => void | Promise<void>
+  onDownloadOriginal: () => void
+  onDownloadClean: () => void
+  onReset: () => void
+}) {
+  const hasSensitiveMetadata = report.sensitive_findings.length > 0
 
   return (
-    <div className="glass-panel rounded-xl p-6">
-      <div className="flex flex-col sm:flex-row items-center gap-4">
-        <Button 
-          onClick={handleClean}
-          disabled={cleaningState === "cleaning"}
-          className={`
-            flex-1 w-full sm:w-auto py-6 px-8 rounded-xl font-semibold text-base
-            transition-all duration-300
-            ${cleaningState === "cleaning" 
-              ? "bg-neon-blue/80" 
-              : "bg-gradient-to-r from-neon-green to-neon-blue hover:from-neon-green/90 hover:to-neon-blue/90 hover:scale-[1.02]"
-            }
-            text-background
-          `}
-        >
-          {cleaningState === "cleaning" ? (
-            <>
-              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-              Removing Metadata...
-            </>
-          ) : (
-            <>
-              <ShieldCheck className="w-5 h-5 mr-2" />
-              Remove Sensitive Metadata & Secure File
-            </>
-          )}
-        </Button>
-        
-        <Button 
-          variant="outline"
-          disabled={cleaningState === "cleaning"}
-          className="flex-1 w-full sm:w-auto py-6 px-8 rounded-xl font-semibold text-base border-border hover:border-neon-blue hover:text-neon-blue transition-all duration-300"
-        >
-          <Download className="w-5 h-5 mr-2" />
-          Download Original
-        </Button>
-      </div>
+    <DashboardPanel accent={stripResult ? "success" : report.risk_level} className="space-y-6">
+      <SectionHeading
+        eyebrow="Actions"
+        title={stripResult ? "Deliver the clean artifact" : "Sanitize and verify"}
+        description={
+          stripResult
+            ? "The clean copy is ready. Download it, verify the audit artifacts, or send the sanitized file without leaving the dashboard."
+            : "Generate a verified clean copy first. Meta-Shield will sanitize the file and immediately rescan the output."
+        }
+        icon={stripResult ? Mail : ShieldCheck}
+      />
 
-      {cleaningState === "cleaning" && (
-        <div className="mt-4 flex items-center justify-center gap-2 text-sm text-neon-blue">
-          <div className="flex gap-1">
-            {[0, 1, 2].map((i) => (
-              <div 
-                key={i}
-                className="w-1.5 h-1.5 rounded-full bg-neon-blue animate-pulse"
-                style={{ animationDelay: `${i * 150}ms` }}
-              />
-            ))}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <MetricCard
+              label="Current Status"
+              value={stripResult ? "Clean artifact ready" : "Source pending clean pass"}
+              tone={stripResult ? "success" : hasSensitiveMetadata ? "warning" : "info"}
+              hint={
+                stripResult
+                  ? `${stripResult.tags_removed} tags removed and verified`
+                  : hasSensitiveMetadata
+                    ? "Sensitive metadata is still present in the uploaded source file."
+                    : "You can still generate a verified clean copy before sharing."
+              }
+            />
+            <MetricCard
+              label="Next Step"
+              value={stripResult ? "Deliver or archive" : "Run sanitization"}
+              tone={stripResult ? "info" : "neutral"}
+              hint={
+                stripResult
+                  ? "Download or send the sanitized output."
+                  : "Meta-Shield will create a cleaned artifact in the outputs pipeline."
+              }
+            />
           </div>
-          <span>Securely stripping metadata from file</span>
+
+          <div className="flex flex-wrap gap-3">
+            <Button
+              onClick={() => void onClean()}
+              disabled={isCleaning}
+              className="rounded-2xl bg-gradient-to-r from-neon-green to-neon-blue px-6 py-6 text-base font-semibold text-background hover:scale-[1.01] hover:opacity-95"
+            >
+              {isCleaning ? (
+                <>
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  Removing Metadata...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="mr-2 h-5 w-5" />
+                  {hasSensitiveMetadata
+                    ? "Remove Sensitive Metadata"
+                    : "Generate Verified Clean Copy"}
+                </>
+              )}
+            </Button>
+
+            <Button
+              onClick={onDownloadOriginal}
+              variant="outline"
+              disabled={isCleaning}
+              className="rounded-2xl border-border/80 bg-background/40 px-6 py-6 text-base hover:border-neon-blue hover:text-neon-blue"
+            >
+              <Download className="mr-2 h-5 w-5" />
+              Download Original
+            </Button>
+
+            {stripResult ? (
+              <Button
+                onClick={onDownloadClean}
+                variant="outline"
+                className="rounded-2xl border-border/80 bg-background/40 px-6 py-6 text-base hover:border-neon-green hover:text-neon-green"
+              >
+                <Download className="mr-2 h-5 w-5" />
+                Download Clean Copy
+              </Button>
+            ) : null}
+          </div>
+
+          {isCleaning ? (
+            <Callout title="Sanitization in progress" tone="info" icon={Loader2}>
+              Meta-Shield is cleaning the uploaded file, writing a clean artifact, and rescanning it before making the result available.
+            </Callout>
+          ) : null}
+
+          {error ? (
+            <Callout title="Action error" tone="danger">
+              {error}
+            </Callout>
+          ) : null}
+
+          <Button
+            onClick={onReset}
+            variant="outline"
+            className="rounded-2xl border-border/80 bg-background/35 hover:border-neon-blue hover:text-neon-blue"
+          >
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Start another review
+          </Button>
         </div>
-      )}
-    </div>
+
+        <div className="space-y-4 rounded-[1.75rem] border border-border/70 bg-background/35 p-5">
+          <SectionHeading
+            eyebrow="Delivery"
+            title="Send the sanitized file"
+            description="The message body and addressing stay in the dashboard, while SMTP transport remains configured on the backend."
+            icon={Mail}
+          />
+
+          {!stripResult ? (
+            <Callout title="Generate the clean copy first" tone="warning">
+              The send flow is unlocked after the file has been sanitized and verified.
+            </Callout>
+          ) : null}
+
+          {stripResult && !stripResult.smtp_enabled ? (
+            <Callout title="SMTP is not configured yet" tone="warning">
+              Configure `SMTP_HOST` on the backend to enable in-app delivery. The clean file can
+              still be downloaded locally right now.
+            </Callout>
+          ) : null}
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <EmailField label="Sender">
+              <Input
+                type="email"
+                value={emailForm.sender}
+                onChange={(event) => onEmailFieldChange("sender", event.target.value)}
+                placeholder="sender@example.com"
+                disabled={!stripResult || isSendingEmail}
+                className="rounded-2xl border-border/80 bg-background/45"
+              />
+            </EmailField>
+            <EmailField label="Recipients">
+              <Input
+                type="text"
+                value={emailForm.recipients}
+                onChange={(event) => onEmailFieldChange("recipients", event.target.value)}
+                placeholder="alice@example.com, bob@example.com"
+                disabled={!stripResult || isSendingEmail}
+                className="rounded-2xl border-border/80 bg-background/45"
+              />
+            </EmailField>
+          </div>
+
+          <EmailField label="Subject">
+            <Input
+              type="text"
+              value={emailForm.subject}
+              onChange={(event) => onEmailFieldChange("subject", event.target.value)}
+              placeholder="Sanitized file from Meta-Shield"
+              disabled={!stripResult || isSendingEmail}
+              className="rounded-2xl border-border/80 bg-background/45"
+            />
+          </EmailField>
+
+          <EmailField label="Body">
+            <Textarea
+              value={emailForm.body}
+              onChange={(event) => onEmailFieldChange("body", event.target.value)}
+              rows={5}
+              placeholder="This attachment was sanitized by Meta-Shield before being shared."
+              disabled={!stripResult || isSendingEmail}
+              className="rounded-2xl border-border/80 bg-background/45"
+            />
+          </EmailField>
+
+          <div className="flex flex-wrap gap-3">
+            <Button
+              onClick={() => void onSendEmail()}
+              disabled={!stripResult || isSendingEmail}
+              className="rounded-2xl bg-gradient-to-r from-neon-blue to-neon-green px-6 py-6 text-base font-semibold text-background hover:scale-[1.01] hover:opacity-95"
+            >
+              {isSendingEmail ? (
+                <>
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  Sending Email...
+                </>
+              ) : (
+                <>
+                  <SendHorizontal className="mr-2 h-5 w-5" />
+                  Send Sanitized Email
+                </>
+              )}
+            </Button>
+          </div>
+
+          {emailError ? (
+            <Callout title="Delivery error" tone="danger">
+              {emailError}
+            </Callout>
+          ) : null}
+
+          {emailResult ? (
+            <Callout title="Delivery completed" tone="success" icon={ShieldCheck}>
+              <p>{emailResult.message}</p>
+              <p>Subject: {emailResult.subject}</p>
+              <p>Recipients: {emailResult.recipients.join(", ")}</p>
+            </Callout>
+          ) : null}
+        </div>
+      </div>
+    </DashboardPanel>
   )
 }
